@@ -79,6 +79,15 @@ fn sprite_blended(i:SpriteFragment)->vec4<f32> {
 @fragment fn sprite_blended_fs(i:SpriteFragment)->@location(0) vec4<f32> {
  return sprite_blended(i);
 }
+// An additive sprite: straight colour dimmed by fog transmittance alone
+// (as additive glow is, D-44), multiplied by alpha in the blend stage.
+fn sprite_additive(i:SpriteFragment)->vec4<f32> {
+ let texel=sprite_texel(i);
+ return vec4(frame_fog_premultiplied(texel.rgb,0.,i.clip.xy,1./i.clip.w),texel.a);
+}
+@fragment fn sprite_additive_fs(i:SpriteFragment)->@location(0) vec4<f32> {
+ return sprite_additive(i);
+}
 // The temporal masks (view/targets.rs). A blended sprite marks as a blended
 // surface does (geometry.wgsl's blended_masked_fs, after AMD's FSR
 // documentation and sample; FidelityFX SDK 1.1.4, MIT, see
@@ -95,6 +104,10 @@ struct SpriteMasked {
 }
 @fragment fn sprite_blended_masked_fs(i:SpriteFragment)->SpriteMasked {
  let color=sprite_blended(i);
+ return SpriteMasked(color,temporal_reactive(color.a),color.a);
+}
+@fragment fn sprite_additive_masked_fs(i:SpriteFragment)->SpriteMasked {
+ let color=sprite_additive(i);
  return SpriteMasked(color,temporal_reactive(color.a),color.a);
 }
 @fragment fn sprite_masked_masked_fs(i:SpriteFragment)->SpriteMasked {

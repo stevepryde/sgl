@@ -5,6 +5,7 @@ members = [
     "crates/sgl-physics",
     "crates/sgl-net",
     "crates/sgl-2d",
+    "crates/sgl-audio",
     "crates/sgl-input",
     "crates/sgl-3d",
     "crates/sgl-post-fx",
@@ -28,6 +29,7 @@ default-members = [
     "crates/sgl-physics",
     "crates/sgl-net",
     "crates/sgl-2d",
+    "crates/sgl-audio",
     "crates/sgl-input",
     "crates/sgl-3d",
     "crates/sgl-post-fx",
@@ -57,6 +59,7 @@ repository = "https://github.com/stevepryde/sgl"
 
 [workspace.dependencies]
 sgl-2d = { version = "0.12.1", path = "crates/sgl-2d" }
+sgl-audio = { version = "0.12.1", path = "crates/sgl-audio" }
 sgl-input = { version = "0.12.1", path = "crates/sgl-input" }
 sgl-3d = { version = "0.12.1", path = "crates/sgl-3d" }
 sgl-post-fx = { version = "0.12.1", path = "crates/sgl-post-fx" }

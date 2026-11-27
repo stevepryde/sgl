@@ -65,6 +65,70 @@ impl Default for NormalLayer {
     }
 }
 
+/// Per-instance material multipliers and additive emission applied on top of
+/// an instance's model's base materials
+/// ([`Scene::set_instance_material_override`](crate::Scene::set_instance_material_override)).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MaterialOverride {
+    /// Linear RGB multiplier applied to each base material's `base[0..3]`.
+    /// Each channel must be finite and nonnegative.
+    pub tint: [f32; 3],
+    /// Alpha multiplier applied to each base material's `base[3]` (clamped to
+    /// `0..=1`). Whenever effective alpha falls below `0.999`, an opaque base
+    /// material switches to blended transparency.
+    pub alpha: f32,
+    /// Linear RGB added to each base material's `emission`. Each channel must
+    /// be finite and nonnegative.
+    pub emissive: [f32; 3],
+}
+
+impl Default for MaterialOverride {
+    fn default() -> Self {
+        Self {
+            tint: [1.0; 3],
+            alpha: 1.0,
+            emissive: [0.0; 3],
+        }
+    }
+}
+
+impl MaterialOverride {
+    /// Whether this override leaves every base material unchanged.
+    #[must_use]
+    pub fn is_identity(&self) -> bool {
+        self.tint == [1.0; 3] && self.alpha == 1.0 && self.emissive == [0.0; 3]
+    }
+
+    /// Whether its factors are finite and nonnegative (with `alpha` finite).
+    pub(crate) fn valid(&self) -> bool {
+        self.tint.iter().all(|v| v.is_finite() && *v >= 0.0)
+            && self.emissive.iter().all(|v| v.is_finite() && *v >= 0.0)
+            && self.alpha.is_finite()
+    }
+
+    /// Computes the overridden [`SurfaceMaterial`] from `base`.
+    pub(crate) fn apply(&self, base: &SurfaceMaterial) -> SurfaceMaterial {
+        let mut values = *base;
+        for (dst, &factor) in values.base[..3].iter_mut().zip(&self.tint) {
+            *dst *= factor;
+        }
+        let alpha = (values.base[3] * self.alpha.clamp(0.0, 1.0)).clamp(0.0, 1.0);
+        values.base[3] = alpha;
+        for (dst, &add) in values.emission.iter_mut().zip(&self.emissive) {
+            *dst += add;
+        }
+        if alpha < 0.999 && matches!(values.alpha, AlphaMode::Opaque) {
+            values.alpha = AlphaMode::Blend {
+                receives_screen_space_reflections: false,
+                keeps_specular: false,
+            };
+            // Planar reflectors cannot be bound on blended materials.
+            values.planar_reflector = None;
+        }
+        values
+    }
+}
+
 /// A material's values, read by [`Scene::material`](crate::Scene::material)
 /// and replaced by [`Scene::set_material`](crate::Scene::set_material).
 /// Author initial content with [`asset::Material`](crate::asset::Material);

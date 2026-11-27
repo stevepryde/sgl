@@ -37,7 +37,7 @@ pub use content::lighting::{
     HemisphereLight, Mist, Sky,
 };
 pub use content::live_specular_probe::{LiveSpecularProbe, ProbeRefresh, ProbeRefreshPace};
-pub use content::material::{AlphaMode, NormalLayer, SurfaceMaterial};
+pub use content::material::{AlphaMode, MaterialOverride, NormalLayer, SurfaceMaterial};
 pub use content::model::{AssetIds, ModelMesh};
 pub use content::outline::Outline;
 pub use content::planar_reflector::PlanarReflector;

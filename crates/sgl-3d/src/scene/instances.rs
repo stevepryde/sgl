@@ -1,6 +1,7 @@
 //! Instances: each one's state, mobility, ambient cube, private motion
 //! history and deformation, its object record and its ray entry, with the
 //! `Scene` operations that add, read, change and remove them.
+use super::candidates::{Candidates, look};
 use super::deformation::InstanceDeformation;
 use super::models::Model;
 use super::objects::{Objects, ShaderData};
@@ -10,13 +11,23 @@ use super::shadow_clusters::PosedClusters;
 use super::slots::Slots;
 use super::static_edits::posed_bounds;
 use super::{Scene, SceneError};
-use crate::content::identity::{Identity, InstanceId, ModelId};
+use crate::content::identity::{Identity, InstanceId, MaterialId, ModelId};
 use crate::content::instance::{InstanceState, Mobility};
+use crate::content::material::{MaterialOverride, SurfaceMaterial};
 use crate::shading::uniforms::{
     OBJECT_CAPTURE_VISIBLE, OBJECT_DEFORMING, OBJECT_STATIC, OBJECT_VISIBLE, ObjectUniform,
 };
 use crate::static_lighting::AmbientCube;
 use glam::{Mat4, Vec3};
+
+/// Per-instance cloned material slots owned by one [`Instance`].
+pub(crate) struct InstanceMaterialOverride {
+    pub override_: MaterialOverride,
+    /// Distinct `(base_material, cloned_material)` pairs owned by this instance.
+    pub cloned: Vec<(MaterialId, MaterialId)>,
+    /// Per-mesh material overrides, parallel to `model.meshes`.
+    pub per_mesh: Vec<MaterialId>,
+}
 
 pub(crate) struct Instance {
     pub state: InstanceState,
@@ -34,6 +45,9 @@ pub(crate) struct Instance {
     stale: bool,
     /// Its pose of its model's deformation, when the model deforms.
     pub deformation: Option<InstanceDeformation>,
+    /// Optional per-instance material override cloned from its model's base
+    /// materials (`Scene::set_instance_material_override`).
+    pub material_override: Option<InstanceMaterialOverride>,
     /// The data its materials' shaders read (`Scene::set_instance_shader_data`),
     /// and as it was in the last submitted frame, none before it was in one.
     pub shader_data: [f32; 4],
@@ -93,6 +107,7 @@ impl Instance {
             drawn: None,
             stale: false,
             deformation,
+            material_override: None,
             shader_data: [0.; 4],
             submitted_shader_data: None,
             shader_stale: false,
@@ -240,6 +255,22 @@ impl Instance {
             self.shader_data,
             self.submitted_shader_data.unwrap_or(self.shader_data),
         ]
+    }
+
+    /// Mesh `mesh`'s material as this instance draws it: its per-instance
+    /// override material if active, otherwise `fallback`.
+    pub fn mesh_material(&self, mesh: usize, fallback: MaterialId) -> MaterialId {
+        self.material_override
+            .as_ref()
+            .and_then(|ov| ov.per_mesh.get(mesh).copied())
+            .unwrap_or(fallback)
+    }
+
+    /// Its per-mesh override materials, if a material override is active.
+    pub fn material_override_meshes(&self) -> Option<&[MaterialId]> {
+        self.material_override
+            .as_ref()
+            .map(|ov| ov.per_mesh.as_slice())
     }
 
     /// Its bounds in its model's space: as deformed, when it deforms.
@@ -654,20 +685,64 @@ impl Scene {
         // Its candidates name its model's meshes and, by whether its pose
         // mirrors, their sets.
         let mirrored = |pose: glam::Mat4| pose.determinant() < 0.;
+        let active_override = self
+            .instances
+            .get(id)?
+            .material_override
+            .as_ref()
+            .map(|ov| ov.override_);
+        let switched_override = if previous != state.model {
+            if let Some(ov) = active_override {
+                let device = self.materials.device().clone();
+                Some(self.clone_override_materials(&device, queue, state.model, ov)?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         if previous != state.model || mirrored(old.pose) != mirrored(state.pose) {
-            let meshes = self.candidate_meshes(state.model, self.models.get(state.model)?);
+            let overrides = if previous != state.model {
+                switched_override.as_ref().map(|ov| ov.per_mesh.as_slice())
+            } else {
+                self.instances.get(id)?.material_override_meshes()
+            };
+            let meshes =
+                self.candidate_meshes_with(state.model, self.models.get(state.model)?, overrides);
             let deformed = self
                 .instances
                 .get(id)?
                 .deformation
                 .as_ref()
                 .map(|deformation| deformation.mesh_bounds.as_slice());
-            self.candidates.place(
+            if let Err(error) = self.candidates.place(
                 id.index(),
                 (state.model, &meshes),
                 mirrored(state.pose),
                 deformed,
-            )?;
+            ) {
+                if let Some(added) = switched_override {
+                    self.release_material_override(added);
+                }
+                return Err(error);
+            }
+        }
+        if previous != state.model {
+            let old_override = self
+                .instances
+                .slots
+                .get_mut(id)
+                .unwrap()
+                .material_override
+                .take();
+            if let Some(old_override) = old_override {
+                self.release_material_override(old_override);
+            }
+            self.instances
+                .slots
+                .get_mut(id)
+                .unwrap()
+                .material_override = switched_override;
         }
         if previous != state.model {
             self.models.get_mut(previous)?.instances -= 1;
@@ -723,6 +798,9 @@ impl Scene {
             .remove(id)
             .ok_or(SceneError::UnknownInstance)?;
         self.candidates.remove(id.index());
+        if let Some(material_override) = instance.material_override.take() {
+            self.release_material_override(material_override);
+        }
         if let Some(deformation) = instance.deformation.take() {
             self.footprints
                 .free(&mut self.rays, deformation.into_words());
@@ -770,5 +848,418 @@ impl Scene {
             .objects
             .write_baked_irradiance(queue, id.index(), cube);
         Ok(())
+    }
+
+    /// Reads an instance's active per-instance material override, or `None` if
+    /// it draws with its model's base materials.
+    pub fn instance_material_override(
+        &self,
+        id: InstanceId,
+    ) -> Result<Option<MaterialOverride>, SceneError> {
+        Ok(self
+            .instances
+            .get(id)?
+            .material_override
+            .as_ref()
+            .map(|ov| ov.override_))
+    }
+
+    /// Sets or clears a per-instance material override without duplicating
+    /// geometry or mutating other instances sharing the same [`ModelId`].
+    ///
+    /// Passing `None` or an identity [`MaterialOverride`] restores the model's
+    /// base materials and frees the instance's cloned material slots. Repeated
+    /// non-identity overrides reuse the existing cloned material slots in place.
+    pub fn set_instance_material_override(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: InstanceId,
+        override_: Option<MaterialOverride>,
+    ) -> Result<(), SceneError> {
+        let desired = match override_ {
+            Some(ov) if !ov.valid() => return Err(SceneError::InvalidMaterialFactors),
+            Some(ov) if ov.is_identity() => None,
+            other => other,
+        };
+        let (model_id, mirrored, deformed, current) = {
+            let instance = self.instances.get(id)?;
+            (
+                instance.state.model,
+                instance.state.pose.determinant() < 0.,
+                instance
+                    .deformation
+                    .as_ref()
+                    .map(|deformation| deformation.mesh_bounds.clone()),
+                instance.material_override.as_ref().map(|ov| ov.override_),
+            )
+        };
+        if current == desired {
+            return Ok(());
+        }
+
+        match desired {
+            None => {
+                let base_meshes = self.candidate_meshes(model_id, self.drawn_model(model_id));
+                let draws_other = {
+                    let instance = self.instances.get(id).expect("checked above");
+                    let model = self.drawn_model(model_id);
+                    model.meshes.iter().enumerate().any(|(i, mesh)| {
+                        let cur = self.drawn_material(instance.mesh_material(i, mesh.material));
+                        let base = self.drawn_material(mesh.material);
+                        cur.values.draws_other_geometry(&base.values)
+                    })
+                };
+                self.candidates.place(
+                    id.index(),
+                    (model_id, &base_meshes),
+                    mirrored,
+                    deformed.as_deref(),
+                )?;
+                if draws_other {
+                    self.footprint_stood(id, None);
+                    self.materials.casters = super::next_generation();
+                }
+                let old = self
+                    .instances
+                    .slots
+                    .get_mut(id)
+                    .expect("checked above")
+                    .material_override
+                    .take()
+                    .expect("current was Some");
+                self.release_material_override(old);
+                self.edited();
+                if draws_other {
+                    self.footprint_stands(id);
+                }
+                Ok(())
+            }
+            Some(ov) if current.is_some() => {
+                let (cloned, per_mesh) = {
+                    let existing = self
+                        .instances
+                        .get(id)
+                        .expect("checked above")
+                        .material_override
+                        .as_ref()
+                        .expect("current is Some");
+                    (existing.cloned.clone(), existing.per_mesh.clone())
+                };
+                let mut updates = Vec::with_capacity(cloned.len());
+                let mut any_blending = false;
+                let mut any_draws_other = false;
+                for &(base_id, clone_id) in &cloned {
+                    let base_values = self.materials.get(base_id)?.values;
+                    let old_values = self.materials.get(clone_id)?.values;
+                    let new_values = ov.apply(&base_values);
+                    self.materials.validate_edit(
+                        (
+                            &self.shaders,
+                            &self.render_textures,
+                            &self.planar_reflectors,
+                        ),
+                        clone_id,
+                        &new_values,
+                    )?;
+                    let blending = old_values.blended() != new_values.blended();
+                    let draws_other = old_values.draws_other_geometry(&new_values);
+                    any_blending |= blending;
+                    any_draws_other |= draws_other;
+                    updates.push((clone_id, old_values, new_values));
+                }
+                if any_blending {
+                    let mut planned = self.candidate_meshes_with(
+                        model_id,
+                        self.drawn_model(model_id),
+                        Some(&per_mesh),
+                    );
+                    for shape in &mut planned {
+                        if let Some(&(_, _, new_values)) =
+                            updates.iter().find(|&&(cid, _, _)| cid == shape.material)
+                        {
+                            shape.blended = new_values.blended();
+                        }
+                    }
+                    if !self.candidates.fit(std::iter::once((
+                        id.index(),
+                        Candidates::keys(&planned, mirrored, deformed.is_some()),
+                    ))) {
+                        return Err(SceneError::DeviceLimit);
+                    }
+                }
+                if any_draws_other {
+                    self.footprint_stood(id, None);
+                }
+                for (clone_id, old_values, new_values) in updates {
+                    self.materials.set(
+                        queue,
+                        (
+                            &self.rays,
+                            &self.shaders,
+                            &self.render_textures,
+                            &self.planar_reflectors,
+                        ),
+                        clone_id,
+                        new_values,
+                    )?;
+                    self.update_material_counts(&old_values, &new_values);
+                    self.candidates
+                        .material_changed(clone_id, look(self.materials.get(clone_id)?));
+                }
+                self.instances
+                    .slots
+                    .get_mut(id)
+                    .expect("checked above")
+                    .material_override
+                    .as_mut()
+                    .expect("current is Some")
+                    .override_ = ov;
+                if any_blending {
+                    let meshes = self.candidate_meshes_with(
+                        model_id,
+                        self.drawn_model(model_id),
+                        Some(&per_mesh),
+                    );
+                    self.candidates
+                        .place(id.index(), (model_id, &meshes), mirrored, deformed.as_deref())
+                        .expect("dry run verified candidates fit");
+                }
+                self.edited();
+                if any_draws_other {
+                    self.footprint_stands(id);
+                }
+                Ok(())
+            }
+            Some(ov) => {
+                let added = self.clone_override_materials(device, queue, model_id, ov)?;
+                let draws_other = {
+                    let model = self.drawn_model(model_id);
+                    model.meshes.iter().enumerate().any(|(i, mesh)| {
+                        let base = self.drawn_material(mesh.material);
+                        let over = self.drawn_material(added.per_mesh[i]);
+                        base.values.draws_other_geometry(&over.values)
+                    })
+                };
+                let meshes = self.candidate_meshes_with(
+                    model_id,
+                    self.drawn_model(model_id),
+                    Some(&added.per_mesh),
+                );
+                if let Err(error) = self.candidates.place(
+                    id.index(),
+                    (model_id, &meshes),
+                    mirrored,
+                    deformed.as_deref(),
+                ) {
+                    self.release_material_override(added);
+                    return Err(error);
+                }
+                if draws_other {
+                    self.footprint_stood(id, None);
+                    self.materials.casters = super::next_generation();
+                }
+                self.instances
+                    .slots
+                    .get_mut(id)
+                    .expect("checked above")
+                    .material_override = Some(added);
+                self.edited();
+                if draws_other {
+                    self.footprint_stands(id);
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Clones override materials for every distinct base material of `model_id`.
+    pub(crate) fn clone_override_materials(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        model_id: ModelId,
+        ov: MaterialOverride,
+    ) -> Result<InstanceMaterialOverride, SceneError> {
+        let (distinct, mesh_indices): (Vec<(MaterialId, u32)>, Vec<usize>) = {
+            let model = self.models.get(model_id)?;
+            let mut distinct: Vec<(MaterialId, u32)> = Vec::new();
+            let mut mesh_indices = Vec::with_capacity(model.meshes.len());
+            for mesh in &model.meshes {
+                let untangented = u32::from(!mesh.tangents);
+                if let Some(pos) = distinct.iter().position(|&(m, _)| m == mesh.material) {
+                    distinct[pos].1 += untangented;
+                    mesh_indices.push(pos);
+                } else {
+                    mesh_indices.push(distinct.len());
+                    distinct.push((mesh.material, untangented));
+                }
+            }
+            (distinct, mesh_indices)
+        };
+
+        let mut planned = Vec::with_capacity(distinct.len());
+        for &(base_id, untangented) in &distinct {
+            let values = ov.apply(&self.materials.get(base_id)?.values);
+            self.materials.validate_clone(
+                (
+                    &self.shaders,
+                    &self.render_textures,
+                    &self.planar_reflectors,
+                ),
+                base_id,
+                &values,
+                untangented,
+            )?;
+            planned.push((base_id, untangented, values));
+        }
+
+        let mut cloned: Vec<(MaterialId, MaterialId)> = Vec::with_capacity(planned.len());
+        for (base_id, untangented, values) in planned {
+            match self.materials.clone_from(
+                device,
+                queue,
+                &mut self.rays,
+                (
+                    &self.shaders,
+                    &self.render_textures,
+                    &self.planar_reflectors,
+                ),
+                base_id,
+                values,
+                untangented,
+            ) {
+                Ok(clone_id) => {
+                    self.shaders
+                        .count(values.shader.map(|shader| shader.shader), 1);
+                    self.render_textures
+                        .count(values.emission_render_texture, 1);
+                    self.planar_reflectors.count(values.planar_reflector, 1);
+                    cloned.push((base_id, clone_id));
+                }
+                Err(error) => {
+                    self.refresh_scene_group(device);
+                    for (_, clone_id) in cloned {
+                        self.remove_cloned_material(clone_id);
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        self.refresh_scene_group(device);
+        let per_mesh = mesh_indices
+            .into_iter()
+            .map(|idx| cloned[idx].1)
+            .collect();
+        Ok(InstanceMaterialOverride {
+            override_: ov,
+            cloned,
+            per_mesh,
+        })
+    }
+
+    /// Removes all cloned materials owned by an [`InstanceMaterialOverride`].
+    pub(crate) fn release_material_override(&mut self, override_: InstanceMaterialOverride) {
+        for (_, clone_id) in override_.cloned {
+            self.remove_cloned_material(clone_id);
+        }
+    }
+
+    fn remove_cloned_material(&mut self, id: MaterialId) {
+        let values = self
+            .materials
+            .get(id)
+            .expect("an instance override material lives")
+            .values;
+        self.materials
+            .remove(&mut self.rays, id)
+            .expect("an instance override material has no model users");
+        self.shaders
+            .count(values.shader.map(|shader| shader.shader), -1);
+        self.render_textures
+            .count(values.emission_render_texture, -1);
+        self.planar_reflectors.count(values.planar_reflector, -1);
+    }
+
+    fn update_material_counts(&mut self, old: &SurfaceMaterial, new: &SurfaceMaterial) {
+        let shader = |values: &SurfaceMaterial| values.shader.map(|shader| shader.shader);
+        self.shaders.count(shader(old), -1);
+        self.shaders.count(shader(new), 1);
+        self.render_textures.count(old.emission_render_texture, -1);
+        self.render_textures.count(new.emission_render_texture, 1);
+        self.planar_reflectors.count(old.planar_reflector, -1);
+        self.planar_reflectors.count(new.planar_reflector, 1);
+    }
+
+    /// Re-applies active instance overrides whose base material `base_id` was
+    /// edited via `Scene::set_material`.
+    pub(crate) fn refresh_overrides_for_material(
+        &mut self,
+        queue: &wgpu::Queue,
+        base_id: MaterialId,
+    ) {
+        let Ok(base_values) = self.materials.get(base_id).map(|m| m.values) else {
+            return;
+        };
+        let affected: Vec<(InstanceId, MaterialId, MaterialOverride)> = self
+            .instances
+            .slots
+            .iter()
+            .filter_map(|(id, instance)| {
+                let ov = instance.material_override.as_ref()?;
+                let &(_, clone_id) = ov.cloned.iter().find(|&&(b, _)| b == base_id)?;
+                Some((id, clone_id, ov.override_))
+            })
+            .collect();
+        for (inst_id, clone_id, ov) in affected {
+            let Ok(old_values) = self.materials.get(clone_id).map(|m| m.values) else {
+                continue;
+            };
+            let new_values = ov.apply(&base_values);
+            if self
+                .materials
+                .set(
+                    queue,
+                    (
+                        &self.rays,
+                        &self.shaders,
+                        &self.render_textures,
+                        &self.planar_reflectors,
+                    ),
+                    clone_id,
+                    new_values,
+                )
+                .is_ok()
+            {
+                self.update_material_counts(&old_values, &new_values);
+                if let Ok(mat) = self.materials.get(clone_id) {
+                    self.candidates.material_changed(clone_id, look(mat));
+                }
+                if old_values.blended() != new_values.blended()
+                    && let Ok(instance) = self.instances.get(inst_id)
+                {
+                    let model_id = instance.state.model;
+                    let mirrored = instance.state.pose.determinant() < 0.;
+                    let deformed = instance
+                        .deformation
+                        .as_ref()
+                        .map(|d| d.mesh_bounds.clone());
+                    let per_mesh = instance
+                        .material_override_meshes()
+                        .map(<[MaterialId]>::to_vec);
+                    let meshes = self.candidate_meshes_with(
+                        model_id,
+                        self.drawn_model(model_id),
+                        per_mesh.as_deref(),
+                    );
+                    let _ = self.candidates.place(
+                        inst_id.index(),
+                        (model_id, &meshes),
+                        mirrored,
+                        deformed.as_deref(),
+                    );
+                }
+            }
+        }
     }
 }

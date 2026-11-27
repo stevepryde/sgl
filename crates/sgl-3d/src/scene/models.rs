@@ -526,6 +526,33 @@ impl Scene {
             &mut self.geometry,
             (previous_range, previous_deformation, &previous),
         );
+        // Re-clone any active per-instance material overrides for the replaced
+        // model's new meshes.
+        let overridden: Vec<(crate::InstanceId, crate::MaterialOverride)> = self
+            .instances
+            .slots
+            .iter()
+            .filter_map(|(inst_id, inst)| {
+                (inst.state.model == id)
+                    .then_some(inst.material_override.as_ref().map(|ov| (inst_id, ov.override_)))
+                    .flatten()
+            })
+            .collect();
+        for (inst_id, ov) in overridden {
+            if let Some(old) = self
+                .instances
+                .slots
+                .get_mut(inst_id)
+                .and_then(|inst| inst.material_override.take())
+            {
+                self.release_material_override(old);
+            }
+            if let Ok(rebuilt) = self.clone_override_materials(device, queue, id, ov)
+                && let Some(inst) = self.instances.slots.get_mut(inst_id)
+            {
+                inst.material_override = Some(rebuilt);
+            }
+        }
         // Its candidates name its new meshes; its alternatives are cleared.
         // Its instances' records say whether they deform now.
         self.candidates.remove_chains(id);

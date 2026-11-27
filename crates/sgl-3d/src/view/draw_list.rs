@@ -213,7 +213,8 @@ impl DrawList {
         let mut frustum = None;
         let mirrored = pose.determinant() < 0.;
         for (mesh_index, mesh) in model.meshes.iter().enumerate() {
-            let material = scene.drawn_material(mesh.material);
+            let material_id = instance.mesh_material(mesh_index, mesh.material);
+            let material = scene.drawn_material(material_id);
             if !population.draws(material, mask) {
                 continue;
             }
@@ -253,7 +254,7 @@ impl DrawList {
             self.batcher.push(InstanceDraw {
                 key: BatchKey {
                     variant,
-                    material: mesh.material,
+                    material: material_id,
                     geometry: Geometry::of(index, instance, drawn_model, drawn_index),
                     mobility: instance.mobility,
                 },
@@ -295,7 +296,8 @@ impl DrawList {
                 .as_ref()
                 .expect("a reached group's mesh has clusters");
             let bounds = &instance.casters[mesh_index];
-            let material = scene.drawn_material(mesh.material);
+            let material_id = instance.mesh_material(mesh_index, mesh.material);
+            let material = scene.drawn_material(material_id);
             let enabled = population.draws(material, mask);
             // Each posed box grown by what the material's shader may move it.
             let grow = |bounds: [Vec3; 2]| posed_grown(bounds, pose, material.displacement_bound());
@@ -328,7 +330,7 @@ impl DrawList {
             self.batcher.push(InstanceDraw {
                 key: BatchKey {
                     variant: population.variant(material, mirrored, instance.deformation.is_some()),
-                    material: mesh.material,
+                    material: material_id,
                     geometry: Geometry::Clusters {
                         model: instance.state.model,
                         mesh: mesh_index,
@@ -361,7 +363,8 @@ impl DrawList {
         }
         let mirrored = pose.determinant() < 0.;
         for (mesh_index, mesh) in model.meshes.iter().enumerate() {
-            let material = scene.drawn_material(mesh.material);
+            let material_id = instance.mesh_material(mesh_index, mesh.material);
+            let material = scene.drawn_material(material_id);
             if !population.draws(material, mask) {
                 continue;
             }
@@ -373,7 +376,7 @@ impl DrawList {
             self.batcher.push(InstanceDraw {
                 key: BatchKey {
                     variant: population.variant(material, mirrored, instance.deformation.is_some()),
-                    material: mesh.material,
+                    material: material_id,
                     geometry: Geometry::of(index, instance, instance.state.model, mesh_index),
                     mobility: instance.mobility,
                 },

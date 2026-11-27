@@ -276,11 +276,14 @@ impl Scene {
 
     /// Where `drawn` stood: its model's meshes that need a footprint, as
     /// their materials are now. None where one needs the view-wide signal.
-    fn stood(&self, drawn: &Drawn) -> Option<Stood> {
+    fn stood(&self, drawn: &Drawn, overrides: Option<&[crate::MaterialId]>) -> Option<Stood> {
         let model = self.drawn_model(drawn.model);
         let mut meshes = Vec::new();
         for (index, mesh) in model.meshes.iter().enumerate() {
-            let material = self.drawn_material(mesh.material);
+            let material_id = overrides
+                .and_then(|mats| mats.get(index).copied())
+                .unwrap_or(mesh.material);
+            let material = self.drawn_material(material_id);
             match self.need(material) {
                 Need::ViewWide => return None,
                 Need::Nothing => {}
@@ -309,13 +312,19 @@ impl Scene {
         let Some(instance) = self.instances.slots.get(id) else {
             return;
         };
+        let overrides = instance
+            .material_override_meshes()
+            .map(<[crate::MaterialId]>::to_vec);
         let (states, held) = instance.uncaptured(&self.models, |drawn| {
             model.is_none_or(|model| model == drawn)
         });
         let mut stood = Vec::new();
         let mut view_wide = false;
         for drawn in states.iter().flatten() {
-            match self.stood(drawn) {
+            let mats = overrides
+                .as_deref()
+                .filter(|_| drawn.model == instance.state.model);
+            match self.stood(drawn, mats) {
                 Some(state) if state.meshes.is_empty() => {}
                 Some(state) => stood.push(state),
                 None => view_wide = true,
@@ -354,8 +363,8 @@ impl Scene {
         let model = self.drawn_model(instance.state.model);
         let (mut draws, mut triangles) = (0, 0);
         let mut view_wide = false;
-        for mesh in &model.meshes {
-            match self.need(self.drawn_material(mesh.material)) {
+        for (index, mesh) in model.meshes.iter().enumerate() {
+            match self.need(self.drawn_material(instance.mesh_material(index, mesh.material))) {
                 Need::Footprint if mesh.count > 0 => {
                     draws += 1;
                     triangles += u64::from(mesh.count / 3);

@@ -60,6 +60,10 @@ pub enum SpriteBlend {
     /// and hit markers. They write no depth.
     #[default]
     Blended,
+    /// Additive color blending (`SrcAlpha` + `One`), writing no depth,
+    /// ordered among blended surfaces: for fire embers, sparks, lightning
+    /// and glowing magic particles.
+    Additive,
     /// Opaque where their alpha reaches `cutoff` (0..=1), cut out
     /// elsewhere, writing depth and motion as opaque surfaces do: for
     /// foliage cards and pixel art. glTF's `alphaCutoff` default is 0.5.
@@ -161,7 +165,7 @@ pub(crate) fn batch_valid(batch: &SpriteBatch) -> bool {
         SpriteFacing::Axis(axis) => axis.is_finite() && axis.length_squared() > 0.,
     };
     let blend = match batch.blend {
-        SpriteBlend::Blended => true,
+        SpriteBlend::Blended | SpriteBlend::Additive => true,
         SpriteBlend::Masked { cutoff } => (0.0..=1.).contains(&cutoff),
     };
     facing && blend

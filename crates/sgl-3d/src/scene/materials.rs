@@ -257,6 +257,11 @@ impl Materials {
         self.moving_records > 0
     }
 
+    /// The device on which material bind groups are built.
+    pub fn device(&self) -> &wgpu::Device {
+        &self.groups.device
+    }
+
     /// The device's binding tier, which a shader's programs are validated
     /// for.
     pub fn tier(&self) -> crate::shading::bind::BindingTier {
@@ -694,6 +699,150 @@ impl Materials {
         validate_sheen(values)?;
         validate_diffuse_transmission(values)?;
         validate_normal_layers(values, material.normal_wrap)
+    }
+
+    /// Whether `values` may be used for a clone of `source` with `untangented`
+    /// meshes lacking authored tangent frames.
+    pub fn validate_clone(
+        &self,
+        (shaders, render_textures, planar_reflectors): (
+            &Shaders,
+            &RenderTextures,
+            &PlanarReflectors,
+        ),
+        source: MaterialId,
+        values: &SurfaceMaterial,
+        untangented: u32,
+    ) -> Result<(), SceneError> {
+        validate_shader(values, shaders)?;
+        if let Some(texture) = values.emission_render_texture {
+            render_textures.get(texture)?;
+        }
+        if let Some(reflector) = values.planar_reflector {
+            planar_reflectors.get(reflector)?;
+            if values.blended() {
+                return Err(SceneError::BlendedPlanarReflector);
+            }
+        }
+        let material = self.slots.get(source).ok_or(SceneError::UnknownMaterial)?;
+        validate_core(values)?;
+        validate_anisotropy(values, untangented)?;
+        validate_alpha(values)?;
+        validate_reflectance(values)?;
+        validate_iridescence(values)?;
+        validate_transmission(values)?;
+        validate_sheen(values)?;
+        validate_diffuse_transmission(values)?;
+        validate_normal_layers(values, material.normal_wrap)
+    }
+
+    /// Clones `source` (sharing its GPU textures, samplers, and map bindings)
+    /// into a new material slot with `values`, for per-instance material
+    /// overrides.
+    #[allow(clippy::too_many_arguments)]
+    pub fn clone_from(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        rays: &mut SceneRays,
+        (shaders, render_textures, planar_reflectors): (
+            &Shaders,
+            &RenderTextures,
+            &PlanarReflectors,
+        ),
+        source: MaterialId,
+        values: SurfaceMaterial,
+        untangented: u32,
+    ) -> Result<MaterialId, SceneError> {
+        self.validate_clone(
+            (shaders, render_textures, planar_reflectors),
+            source,
+            &values,
+            untangented,
+        )?;
+        let src = self.slots.get(source).ok_or(SceneError::UnknownMaterial)?;
+        let bound = src.bound;
+        let normal_wrap = src.normal_wrap;
+        let casts_directional_shadow = src.casts_directional_shadow;
+        let distinct = src.textures.clone();
+        let flags = src.flags;
+        let params_bytes = src.params.as_ref().map(|p| p.bytes().to_vec());
+
+        let uniform =
+            MaterialUniform::new(&values, bound.maps.maps(), &bound.samplers, &bound.uvs);
+        let more_maps = crate::shading::material::more_maps(&bound.samplers, &bound.uvs);
+        let record = rays.add_material(
+            device,
+            queue,
+            &uniform,
+            bound
+                .maps
+                .ray_textures(|texture| self.textures.get(texture).ray.start),
+            (more_maps, &bound.uvs),
+        )?;
+        if flags != 0 {
+            rays.write_flags(queue, record.start, flags);
+        }
+        let values_buffer = buffer(
+            device,
+            "material override",
+            bytemuck::bytes_of(&uniform),
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        let bindings = buffer(
+            device,
+            "material override bindings",
+            bytemuck::bytes_of(&MaterialBindings {
+                flags,
+                more_maps,
+                padding: [0; 2],
+                map_uvs: *bound.uvs.rows(),
+            }),
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        let mut params = params_block(device, shaders, &values);
+        if let (Some(params), Some(bytes)) = (&mut params, params_bytes)
+            && bytes.len() == params.bytes().len()
+        {
+            params.set(queue, &bytes);
+        }
+        let emission = values.emission_render_texture.map(|id| {
+            &render_textures
+                .get(id)
+                .expect("a validated render texture lives")
+                .view
+        });
+        let group = self.groups.group(
+            device,
+            &self.textures,
+            &bound,
+            [&values_buffer, &bindings],
+            params.as_ref(),
+            emission,
+        );
+        for &texture in &distinct {
+            self.textures.use_texture(texture);
+        }
+        self.count(&values, uniform.surface_moves(), 1);
+        if bound.maps.occlusion_specular() {
+            self.occlusion_specular += 1;
+        }
+        Ok(self.slots.insert(Material {
+            values,
+            normal_wrap,
+            group,
+            bound,
+            buffer: values_buffer,
+            bindings,
+            casts_directional_shadow,
+            textures: distinct,
+            record,
+            users: HashMap::new(),
+            untangented,
+            flags,
+            parameters: 0,
+            params,
+        }))
     }
 
     /// Replaces a material's values in raster and the ray source at once;

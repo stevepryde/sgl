@@ -446,14 +446,28 @@ impl super::Scene {
     /// `model`'s meshes (`id`'s, or its replacement's) as its instances'
     /// candidates take them.
     pub(crate) fn candidate_meshes(&self, id: ModelId, model: &Model) -> Vec<CandidateMesh> {
+        self.candidate_meshes_with(id, model, None)
+    }
+
+    /// `model`'s meshes (`id`'s, or its replacement's) with optional per-mesh
+    /// material overrides.
+    pub(crate) fn candidate_meshes_with(
+        &self,
+        id: ModelId,
+        model: &Model,
+        overrides: Option<&[MaterialId]>,
+    ) -> Vec<CandidateMesh> {
         model
             .meshes
             .iter()
             .enumerate()
             .map(|(index, mesh)| {
-                let material = self.drawn_material(mesh.material);
+                let material_id = overrides
+                    .and_then(|mats| mats.get(index).copied())
+                    .unwrap_or(mesh.material);
+                let material = self.drawn_material(material_id);
                 CandidateMesh {
-                    material: mesh.material,
+                    material: material_id,
                     look: look(material),
                     blended: material.values.blended(),
                     need: mesh_need(mesh.ranges.section_count(), &mesh.lods, &self.models),
@@ -504,12 +518,32 @@ impl super::Scene {
         let instances = plan
             .iter()
             .zip(&groups)
-            .flat_map(|(&(_, meshes, deforms), ids)| {
+            .flat_map(|(&(model, meshes, deforms), ids)| {
                 ids.iter().map(move |&id| {
                     let instance = self.instances.get(id).expect("a grouped instance lives");
                     let mirrored = instance.state.pose.determinant() < 0.;
                     let deforms = deforms.unwrap_or(instance.deformation.is_some());
-                    (id.index(), Candidates::keys(meshes, mirrored, deforms))
+                    if let Some(mats) = instance.material_override_meshes()
+                        && mats.len() == meshes.len()
+                    {
+                        let overridden: Vec<CandidateMesh> = meshes
+                            .iter()
+                            .zip(mats)
+                            .map(|(&shape, &mat_id)| {
+                                let mat = self.drawn_material(mat_id);
+                                CandidateMesh {
+                                    material: mat_id,
+                                    look: look(mat),
+                                    blended: mat.values.blended(),
+                                    ..shape
+                                }
+                            })
+                            .collect();
+                        let _ = model;
+                        (id.index(), Candidates::keys(&overridden, mirrored, deforms))
+                    } else {
+                        (id.index(), Candidates::keys(meshes, mirrored, deforms))
+                    }
                 })
             });
         self.candidates.fit(instances)
@@ -523,16 +557,27 @@ impl super::Scene {
     pub(crate) fn place_candidates_of(&mut self, models: &[ModelId]) {
         let groups = self.instances_of(models);
         for (&model, ids) in models.iter().zip(groups) {
-            let meshes = self.candidate_meshes(model, self.drawn_model(model));
+            let base_meshes = self.candidate_meshes(model, self.drawn_model(model));
             for id in ids {
-                let instance = self.instances.get(id).expect("a grouped instance lives");
-                let mirrored = instance.state.pose.determinant() < 0.;
-                let deformed = instance
-                    .deformation
-                    .as_ref()
-                    .map(|deformation| deformation.mesh_bounds.as_slice());
+                let (mirrored, deformed, overrides) = {
+                    let instance = self.instances.get(id).expect("a grouped instance lives");
+                    (
+                        instance.state.pose.determinant() < 0.,
+                        instance
+                            .deformation
+                            .as_ref()
+                            .map(|deformation| deformation.mesh_bounds.clone()),
+                        instance.material_override_meshes().map(<[MaterialId]>::to_vec),
+                    )
+                };
+                let meshes = match overrides.as_deref() {
+                    Some(mats) if mats.len() == base_meshes.len() => {
+                        self.candidate_meshes_with(model, self.drawn_model(model), Some(mats))
+                    }
+                    _ => base_meshes.clone(),
+                };
                 self.candidates
-                    .place(id.index(), (model, &meshes), mirrored, deformed)
+                    .place(id.index(), (model, &meshes), mirrored, deformed.as_deref())
                     .expect("an edit's dry run found its candidates fit");
             }
         }

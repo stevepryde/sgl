@@ -66,7 +66,7 @@ impl SpriteBatchUniform {
                 SpriteSizing::Fixed => FIXED_SIZE,
             },
             cutoff: match batch.blend {
-                SpriteBlend::Blended => 0.,
+                SpriteBlend::Blended | SpriteBlend::Additive => 0.,
                 SpriteBlend::Masked { cutoff } => cutoff,
             },
             padding: [0.; 3],

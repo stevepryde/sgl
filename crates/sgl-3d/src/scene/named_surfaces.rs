@@ -52,7 +52,7 @@ impl Scene {
             }
             let model = self.drawn_model(instance.state.model);
             for (index, mesh) in model.meshes.iter().enumerate() {
-                let material = self.drawn_material(mesh.material);
+                let material = self.drawn_material(instance.mesh_material(index, mesh.material));
                 let Some(name) = names(&material.values) else {
                     continue;
                 };

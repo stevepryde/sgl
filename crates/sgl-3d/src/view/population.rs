@@ -97,7 +97,7 @@ impl LightReach {
             for (mesh, posed) in instance.casters.iter().enumerate() {
                 // Grown by what the mesh's material's shader may move it.
                 let grow = scene
-                    .drawn_material(model.meshes[mesh].material)
+                    .drawn_material(instance.mesh_material(mesh, model.meshes[mesh].material))
                     .displacement_bound();
                 for (group, &bounds) in posed.groups.iter().enumerate() {
                     if within(posed_grown(bounds, instance.state.pose, grow), light) {

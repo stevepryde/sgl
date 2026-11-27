@@ -7,7 +7,7 @@
 //! changed. Nothing runs, and nothing is created, in a frame without
 //! sprites; the pipelines are one program set in a `Compiled` slot (AR-13).
 use crate::content::identity::SpriteBatchId;
-use crate::content::sprite::SpriteFacing;
+use crate::content::sprite::{SpriteBlend, SpriteFacing};
 use crate::shading::gbuffer::{COLOR as HDR, DEPTH, MOTION};
 use crate::shading::sprite::{facing_normal, group, order_key};
 use crate::view::compile::{Compiled, Creation, Creator};
@@ -36,6 +36,8 @@ pub(crate) const MASKED_FS_ENTRY: &str = "sprite_masked_fs";
 pub(crate) const MASKED_MASKED_FS_ENTRY: &str = "sprite_masked_masked_fs";
 pub(crate) const BLENDED_FS_ENTRY: &str = "sprite_blended_fs";
 pub(crate) const BLENDED_MASKED_FS_ENTRY: &str = "sprite_blended_masked_fs";
+pub(crate) const ADDITIVE_FS_ENTRY: &str = "sprite_additive_fs";
+pub(crate) const ADDITIVE_MASKED_FS_ENTRY: &str = "sprite_additive_masked_fs";
 pub(crate) const FOOTPRINT_FS_ENTRY: &str = "sprite_footprint_fs";
 
 /// What a masked batch's colour writes to the temporal masks.
@@ -57,6 +59,8 @@ struct Programs {
     masked: [wgpu::RenderPipeline; 3],
     /// A blended batch's colour, without and with the temporal masks.
     blended: [wgpu::RenderPipeline; 2],
+    /// An additive batch's colour, without and with the temporal masks.
+    additive: [wgpu::RenderPipeline; 2],
     /// A changed masked batch's last submitted sprites' quads, marking
     /// transparency and composition 1 and nothing else.
     footprint: wgpu::RenderPipeline,
@@ -131,6 +135,14 @@ impl Programs {
             })
         };
         let premultiplied = Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING);
+        let additive_blend = Some(wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::SrcAlpha,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent::OVER,
+        });
         let depth = pipeline(
             "masked sprite depth and motion",
             &masked_layout,
@@ -183,7 +195,25 @@ impl Programs {
                 &blended_layout,
                 (ORDERED_VS_ENTRY, BLENDED_MASKED_FS_ENTRY),
                 &[],
-                &[color(premultiplied), reactive, composition],
+                &[color(premultiplied), reactive.clone(), composition.clone()],
+                false,
+            ),
+        ]);
+        let additive = Creation::array([
+            pipeline(
+                "additive sprites",
+                &blended_layout,
+                (ORDERED_VS_ENTRY, ADDITIVE_FS_ENTRY),
+                &[],
+                &[color(additive_blend)],
+                false,
+            ),
+            pipeline(
+                "additive sprites with temporal masks",
+                &blended_layout,
+                (ORDERED_VS_ENTRY, ADDITIVE_MASKED_FS_ENTRY),
+                &[],
+                &[color(additive_blend), reactive, composition],
                 false,
             ),
         ]);
@@ -203,14 +233,18 @@ impl Programs {
             ],
             false,
         );
-        depth.zip(masked).zip(blended).zip(footprint).map(
-            move |(((depth, masked), blended), footprint)| Self {
+        depth
+            .zip(masked)
+            .zip(blended)
+            .zip(additive)
+            .zip(footprint)
+            .map(move |((((depth, masked), blended), additive), footprint)| Self {
                 depth,
                 masked,
                 blended,
+                additive,
                 footprint,
-            },
-        )
+            })
     }
 }
 
@@ -493,7 +527,17 @@ impl Sprites {
         else {
             return;
         };
-        pass.set_pipeline(&programs.blended[usize::from(masked)]);
+        let batch = scene
+            .sprites
+            .batches
+            .get(listed.id)
+            .expect("a listed batch lives");
+        let pipeline = if batch.look.blend == SpriteBlend::Additive {
+            &programs.additive[usize::from(masked)]
+        } else {
+            &programs.blended[usize::from(masked)]
+        };
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, camera_unlit, &[]);
         draw(pass, scene, listed, Some(&order.group));
     }

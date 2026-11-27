@@ -76,6 +76,11 @@ impl ParamBlock {
         changed
     }
 
+    /// This frame's parameter block bytes.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
     /// Whether this frame's block differs from the last submitted frame's;
     /// false before the block was in one, which has no last submitted
     /// block.

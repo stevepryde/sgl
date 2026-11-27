@@ -2448,3 +2448,191 @@ fn an_assets_instanced_meshes_are_models_of_their_own_added_whole_or_not_at_all(
         "a material was left added"
     );
 }
+
+#[test]
+fn instance_material_override_tints_emits_fades_and_leaves_siblings_untouched() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let mut asset = test_support::cube();
+    asset.materials[0].base = [0.5, 0.5, 0.5, 1.0];
+    asset.materials[0].emissive = [0.0, 0.0, 0.0];
+    let ids = scene.add_asset(&device, &queue, asset).unwrap();
+    let base_mat_id = ids.materials[0];
+    let base_material_count = scene.materials.slots.iter().count();
+    let initial_geometry = scene.diagnostic_resources().geometry_live;
+
+    let inst_a = scene
+        .add_instance(
+            &device,
+            &queue,
+            state(ids.model, Mat4::from_translation(Vec3::new(-1.5, 0.0, -5.0))),
+            Mobility::Moving,
+        )
+        .unwrap();
+    let inst_b = scene
+        .add_instance(
+            &device,
+            &queue,
+            state(ids.model, Mat4::from_translation(Vec3::new(1.5, 0.0, -5.0))),
+            Mobility::Moving,
+        )
+        .unwrap();
+
+    assert_eq!(scene.instance_material_override(inst_a).unwrap(), None);
+    assert_eq!(scene.instance_material_override(inst_b).unwrap(), None);
+
+    // Invalid overrides are refused without mutating state.
+    assert!(matches!(
+        scene.set_instance_material_override(
+            &device,
+            &queue,
+            inst_a,
+            Some(MaterialOverride {
+                tint: [-1.0, 1.0, 1.0],
+                ..MaterialOverride::default()
+            }),
+        ),
+        Err(SceneError::InvalidMaterialFactors)
+    ));
+    assert!(matches!(
+        scene.set_instance_material_override(
+            &device,
+            &queue,
+            inst_a,
+            Some(MaterialOverride {
+                alpha: f32::NAN,
+                ..MaterialOverride::default()
+            }),
+        ),
+        Err(SceneError::InvalidMaterialFactors)
+    ));
+    assert_eq!(scene.materials.slots.iter().count(), base_material_count);
+
+    // Apply tint + emissive override on inst_a.
+    let ov1 = MaterialOverride {
+        tint: [0.2, 0.8, 0.4],
+        alpha: 1.0,
+        emissive: [2.0, 0.5, 0.0],
+    };
+    scene
+        .set_instance_material_override(&device, &queue, inst_a, Some(ov1))
+        .unwrap();
+    assert_eq!(scene.instance_material_override(inst_a).unwrap(), Some(ov1));
+    assert_eq!(scene.instance_material_override(inst_b).unwrap(), None);
+    assert_eq!(
+        scene.materials.slots.iter().count(),
+        base_material_count + 1,
+        "clones one material slot for the overridden instance"
+    );
+    assert_eq!(
+        scene.diagnostic_resources().geometry_live,
+        initial_geometry,
+        "does not duplicate GPU geometry buffers"
+    );
+
+    let clone_mat_id = scene
+        .instances
+        .get(inst_a)
+        .unwrap()
+        .mesh_material(0, base_mat_id);
+    assert_ne!(clone_mat_id, base_mat_id);
+    assert_eq!(
+        scene
+            .instances
+            .get(inst_b)
+            .unwrap()
+            .mesh_material(0, base_mat_id),
+        base_mat_id,
+        "sibling instance still references unmodified base material"
+    );
+    let cloned_vals = scene.material(clone_mat_id).unwrap();
+    assert_eq!(cloned_vals.base, [0.1, 0.4, 0.2, 1.0]);
+    assert_eq!(cloned_vals.emission, [2.0, 0.5, 0.0]);
+    assert_eq!(cloned_vals.alpha, AlphaMode::Opaque);
+    assert_eq!(scene.material(base_mat_id).unwrap().base, [0.5, 0.5, 0.5, 1.0]);
+
+    // Update override in place to alpha < 0.999: reuses same cloned slot and switches to Blend.
+    let ov2 = MaterialOverride {
+        tint: [1.0, 0.2, 0.2],
+        alpha: 0.4,
+        emissive: [0.5, 0.0, 0.0],
+    };
+    scene
+        .set_instance_material_override(&device, &queue, inst_a, Some(ov2))
+        .unwrap();
+    assert_eq!(
+        scene.materials.slots.iter().count(),
+        base_material_count + 1,
+        "reuses existing cloned material slot on update"
+    );
+    assert_eq!(
+        scene
+            .instances
+            .get(inst_a)
+            .unwrap()
+            .mesh_material(0, base_mat_id),
+        clone_mat_id
+    );
+    let faded_vals = scene.material(clone_mat_id).unwrap();
+    assert!((faded_vals.base[3] - 0.4).abs() < 1e-6);
+    assert_eq!(
+        faded_vals.alpha,
+        AlphaMode::Blend {
+            receives_screen_space_reflections: false,
+            keeps_specular: false,
+        }
+    );
+    assert!(
+        scene.candidates.blended().any(|idx| idx == inst_a.index()),
+        "faded instance enters the blended draw walk"
+    );
+    assert!(
+        !scene.candidates.blended().any(|idx| idx == inst_b.index()),
+        "opaque sibling stays out of the blended draw walk"
+    );
+
+    // Render a real frame with both instances to exercise opaque + blended override paths.
+    let size = [64, 64];
+    let settings = Settings {
+        antialiasing: settings::Antialiasing::Off,
+        bloom: settings::Bloom::Off,
+        atmosphere: false,
+        ..Settings::default()
+    };
+    let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
+    let output = crate::view::targets::target(&device, "override test", size, crate::shading::gbuffer::COLOR);
+    let cam = Camera {
+        view: camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::new(0.0, 0.0, -5.0), Vec3::Y),
+        projection: perspective(1.0, 1.0, 0.1),
+        eye: Vec3::ZERO,
+    };
+    let input = FrameInput::new(cam);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    renderer.render(
+        &device, &queue, &mut encoder, &mut scene, &input, &settings, &output, None,
+    );
+    queue.submit([encoder.finish()]);
+    renderer.finish_frame(&mut scene);
+
+    // Clearing via identity override frees the cloned material slot and restores opaque candidates.
+    scene
+        .set_instance_material_override(&device, &queue, inst_a, Some(MaterialOverride::default()))
+        .unwrap();
+    assert_eq!(scene.instance_material_override(inst_a).unwrap(), None);
+    assert_eq!(scene.materials.slots.iter().count(), base_material_count);
+    assert!(!scene.candidates.blended().any(|idx| idx == inst_a.index()));
+
+    // Setting again and removing the instance frees the cloned material slot with no leak.
+    scene
+        .set_instance_material_override(&device, &queue, inst_a, Some(ov1))
+        .unwrap();
+    assert_eq!(scene.materials.slots.iter().count(), base_material_count + 1);
+    scene.remove_instance(inst_a).unwrap();
+    assert_eq!(scene.materials.slots.iter().count(), base_material_count);
+    assert!(matches!(
+        scene.instance_material_override(inst_a),
+        Err(SceneError::UnknownInstance)
+    ));
+}

@@ -86,7 +86,7 @@ impl FootprintList {
                 continue;
             }
             for (index, mesh) in model.meshes.iter().enumerate() {
-                let material = scene.drawn_material(mesh.material);
+                let material = scene.drawn_material(instance.mesh_material(index, mesh.material));
                 if mesh.count > 0
                     && scene.need(material) == Need::Footprint
                     && material.enabled(Some(mask))

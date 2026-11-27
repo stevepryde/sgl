@@ -19,6 +19,7 @@ use std::collections::HashMap;
 /// (each binding's UV set and transform). A render texture in the emission
 /// map's binding is sampled in that binding's state at that binding's
 /// coordinates.
+#[derive(Clone, Copy)]
 pub(super) struct Bound {
     pub maps: InEffect,
     pub samplers: MapSamplers,

@@ -130,6 +130,7 @@ impl Scene {
         }
         self.candidates
             .material_changed(id, super::super::candidates::look(self.materials.get(id)?));
+        self.refresh_overrides_for_material(queue, id);
         // And where they stand, drawn as it draws now.
         for (model, showing) in &showing {
             self.footprint_model_stands(*model, showing);

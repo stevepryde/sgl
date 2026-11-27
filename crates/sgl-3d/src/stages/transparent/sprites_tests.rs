@@ -986,3 +986,54 @@ fn axis_locked_cards_compose_by_distance_under_a_steep_camera() {
     let overlap = at(&composite, pixel(&camera, Vec3::new(0., 0.5, 2.)));
     assert!(near(overlap, over(red, green)), "{overlap:?}");
 }
+
+#[test]
+fn additive_sprites_sum_their_light_without_writing_depth() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let sprites = [
+        Sprite {
+            tint: [0.6, 0.0, 0.0, 0.5],
+            ..Sprite::new(Vec3::new(0.0, 0.0, -5.0), Vec2::splat(2.0))
+        },
+        Sprite {
+            tint: [0.4, 0.8, 0.0, 0.5],
+            ..Sprite::new(Vec3::new(0.0, 0.0, -4.5), Vec2::splat(2.0))
+        },
+    ];
+    let _id = batch(
+        &device,
+        &queue,
+        &mut scene,
+        &white(),
+        SpriteBlend::Additive,
+        &sprites,
+    );
+    let cam = camera(Vec3::ZERO, Vec3::new(0.0, 0.0, -5.0));
+
+    // Render without temporal masks (ADDITIVE_FS_ENTRY) and check exact additive sum + no depth write.
+    let mut frames = Frames::new(&device, &queue, settings(settings::Antialiasing::Off));
+    frames.render(&device, &queue, &mut scene, cam);
+    let composite = frames.composite(&device, &queue);
+    let depth = frames.depth(&device, &queue);
+    let centre = pixel(&cam, Vec3::new(0.0, 0.0, -5.0));
+    let expected = [0.6 * 0.5 + 0.4 * 0.5, 0.8 * 0.5, 0.0];
+    let actual = at(&composite, centre);
+    assert!(
+        near(actual, expected),
+        "expected additive sum {expected:?}, got {actual:?}"
+    );
+    assert_eq!(at(&depth, centre), 0.0, "additive sprites must not write depth");
+
+    // Also exercise the temporal-masked additive pipeline (ADDITIVE_MASKED_FS_ENTRY).
+    let mut taa_frames = Frames::new(&device, &queue, settings(settings::Antialiasing::Taa));
+    taa_frames.render(&device, &queue, &mut scene, cam);
+    let taa_composite = taa_frames.composite(&device, &queue);
+    let taa_actual = at(&taa_composite, centre);
+    assert!(
+        near(taa_actual, expected),
+        "expected TAA additive sum {expected:?}, got {taa_actual:?}"
+    );
+}

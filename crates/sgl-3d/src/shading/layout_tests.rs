@@ -377,6 +377,8 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
                 sprites::MASKED_MASKED_FS_ENTRY,
                 sprites::BLENDED_FS_ENTRY,
                 sprites::BLENDED_MASKED_FS_ENTRY,
+                sprites::ADDITIVE_FS_ENTRY,
+                sprites::ADDITIVE_MASKED_FS_ENTRY,
                 sprites::FOOTPRINT_FS_ENTRY,
             ],
         ),
