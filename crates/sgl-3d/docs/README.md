@@ -253,8 +253,8 @@ The examples live in the repository, not the published crate:
 fog, `--cookie` a spot light's cookie);
 [`examples/skinned.rs`](../../../examples/sgl-3d/examples/skinned.rs) adds a skinned, morphed glTF
 sampled and posed with `animation::Pose`,
-[`examples/spring_bones.rs`](../../../examples/sgl-3d/examples/spring_bones.rs) a ponytail swung
-by `spring_bones` around a body's colliders,
+[`examples/spring_bones.rs`](../../../examples/sgl-3d/examples/spring_bones.rs) a ponytail and a
+cape (one open `Sheet`) swung by `spring_bones` around a body's colliders,
 [`examples/gltf_lights.rs`](../../../examples/sgl-3d/examples/gltf_lights.rs) a glTF's authored
 lights installed, with the suns for the frame's two slots picked,
 [`examples/gltf_instancing.rs`](../../../examples/sgl-3d/examples/gltf_instancing.rs) a glTF's

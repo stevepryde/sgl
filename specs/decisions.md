@@ -2294,3 +2294,28 @@ Use the [current specs](README.md) for implementation and the
   node and the instance, which Godot leaves unscaled, so a rig authored in
   centimetres under a 0.01-scale root, or an instance a game scales, keeps
   its colliders.
+  Sheets (#933): capes and skirts are chains linked at each depth by
+  distance constraints solved by position-based dynamics (Müller 2007;
+  Jolt's edge constraint, rigid, five iterations), the bone tails as
+  particles. Two departures. No shear links, which Jolt and
+  SPCRJointDynamics put across each cell: bones do not stretch, so a cell
+  with both diagonals fixed is a rigid plate and a sheet cannot shear (six
+  chains in a closed ring under gravity and a level force settle 1.14 rad
+  from the direction free chains take with them, within 0.001 rad
+  without). Bones and links alone are a Chebyshev net, the kinematic model
+  of woven cloth (Mack and Taylor 1956), and each chain's stiffness resists
+  shear. Links that act only when stretched were tried and rejected: chains
+  pushed the same way pile together (spacing down 93%). Links collide with
+  the colliders as segments, as SPCRJointDynamics' do, by position-based
+  projection of the contact point, so a collider wider than the gap between
+  two chains does not wedge them apart (a 0.07 m sphere driven between two
+  chains of an 8-chain skirt stretched their link 56.7% with tails
+  colliding alone, 8.2% with links colliding). The nearest points of a
+  link and a capsule are Godot's `get_closest_points_between_segments`
+  with one change: segments are parallel by their angle, where Godot
+  compares a length to the fourth power with a fixed threshold, which took
+  every link of a quarter-size character as parallel to the capsule (link
+  stretch 22.6% before, 7.9% after). The cloth between links does
+  not collide (triangles against spheres and capsules): the spacing rule in
+  the package guide avoids it at the chain counts bone skirts use, and the
+  triangle tests would be the larger part of a step's cost (#934).

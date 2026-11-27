@@ -1,10 +1,11 @@
-//! Secondary motion: a body with a head and a ponytail, generated here as a
-//! skinned GLB so that no asset file or licence is needed, walks, stops
-//! and turns, and the ponytail swings by `spring_bones` around a sphere on
-//! the head and a capsule on the torso. Each frame the game samples its
-//! pose (the rest pose here), steps the chain with the instance's world
-//! matrix and its `dt`, then composes the joint matrices and poses the
-//! instance as for any skinned model.
+//! Secondary motion: a body with a head, a ponytail and a cape, generated
+//! here as a skinned GLB so that no asset file or licence is needed, walks,
+//! stops and turns, and the ponytail and the cape swing by `spring_bones`
+//! around a sphere on the head and a capsule on the torso. The cape is six
+//! chains side by side, held together as one `Sheet`. Each frame the game
+//! samples its pose (the rest pose here), steps the chains with the
+//! instance's world matrix and its `dt`, then composes the joint matrices
+//! and poses the instance as for any skinned model.
 //!
 //! Run with `cargo run -p sgl-3d-examples --example spring_bones -- target/spring_bones.png`.
 //! Optional `--frames N` sets how many frames (at 60 Hz) it animates.
@@ -17,7 +18,7 @@ use sgl_3d::{
     deformation::{JointMatrices, Rig},
     glam::{Mat4, Quat, Vec3},
     settings::{RenderPreset, Settings},
-    spring_bones::{Chain, Collider, ColliderShape, SpringBones},
+    spring_bones::{Chain, Collider, ColliderShape, Sheet, SpringBones},
 };
 use std::error::Error;
 
@@ -37,10 +38,37 @@ const HAIR_NODES: u32 = 6;
 const HAIR_BONE: f32 = 0.1;
 const TIP: f32 = 0.1;
 const HAIR_RADIUS: f32 = 0.025;
-/// Node indices: the mesh, the body, the head, then the hair.
+/// The cape: `CAPE_CHAINS` chains of `CAPE_NODES` nodes hanging from the
+/// shoulders behind the torso, `CAPE_ROOT` (in the body's space) the first
+/// chain's root and `CAPE_SPACING` apart along X, each node `CAPE_BONE`
+/// below the last and the tip as far again. The cape hangs against the
+/// torso's back: the line between its two middle chains, 0.16 m behind the
+/// torso's axis, lies on the torso's surface grown by the cape's radius,
+/// and every other point of the cape is further out, as a sheet's links
+/// must clear its colliders.
+const CAPE_CHAINS: u32 = 6;
+const CAPE_NODES: u32 = 6;
+const CAPE_ROOT: Vec3 = Vec3::new(-0.15, 1.36, -0.16);
+const CAPE_SPACING: f32 = 0.06;
+const CAPE_BONE: f32 = 0.1;
+const CAPE_RADIUS: f32 = 0.02;
+/// Node indices: the mesh, the body, the head, the hair, then the cape,
+/// chain after chain.
 const BODY: usize = 1;
 const HEAD: usize = 2;
 const HAIR: usize = 3;
+const CAPE: usize = HAIR + HAIR_NODES as usize;
+
+/// The cape's node `node` of chain `chain`.
+fn cape_node(chain: u32, node: u32) -> usize {
+    CAPE + (chain * CAPE_NODES + node) as usize
+}
+
+/// Where the cape's node `node` of chain `chain` lies at rest in the
+/// model; `CAPE_NODES` for the tip past the last.
+fn cape_rest(chain: u32, node: u32) -> Vec3 {
+    CAPE_ROOT + Vec3::new(chain as f32 * CAPE_SPACING, -(node as f32) * CAPE_BONE, 0.)
+}
 
 /// One ring of a surface around the Y axis: its centre, radius, the Y part
 /// of its normal, and the joints (indices into the skin) and weights of its
@@ -107,9 +135,10 @@ fn sphere(center: Vec3, radius: f32, joint: u16) -> Vec<Ring> {
         .collect()
 }
 
-/// The character as a GLB: a torso and a head, each rigid on its bone, and
-/// a ponytail skinned along its chain, each ring weighted between the two
-/// hair bones nearest it.
+/// The character as a GLB: a torso and a head, each rigid on its bone, a
+/// ponytail skinned along its chain, each ring weighted between the two
+/// hair bones nearest it, and a double-sided cape, a grid with a vertex on
+/// each cape node (and tip) rigid on that node.
 fn character() -> Vec<u8> {
     let mut surface = Surface::default();
     // Joints: 0 the body, 1 the head, 2.. the hair, in node order.
@@ -139,12 +168,37 @@ fn character() -> Vec<u8> {
         })
         .collect();
     surface.tube(&hair);
+    // The cape's vertices, chain after chain, root to tip.
+    let first = surface.positions.len() as u32;
+    let at = |chain: u32, node: u32| first + chain * (CAPE_NODES + 1) + node;
+    for chain in 0..CAPE_CHAINS {
+        for node in 0..=CAPE_NODES {
+            surface.positions.push(cape_rest(chain, node).to_array());
+            surface.normals.push([0., 0., -1.]);
+            let joint = (cape_node(chain, node.min(CAPE_NODES - 1)) - BODY) as u16;
+            surface.joints.push([joint, 0, 0, 0]);
+            surface.weights.push([1., 0., 0., 0.]);
+        }
+    }
+    let mut cape_indices = Vec::new();
+    for chain in 0..CAPE_CHAINS - 1 {
+        for node in 0..CAPE_NODES {
+            let (a, b) = (at(chain, node), at(chain + 1, node));
+            let (c, d) = (at(chain, node + 1), at(chain + 1, node + 1));
+            cape_indices.extend([a, b, c, b, d, c]);
+        }
+    }
 
     // Each joint's rest position in the model; its inverse bind matrix
     // undoes it, since no rest node is rotated.
     let mut rest = vec![Vec3::ZERO, NECK];
     for node in 0..HAIR_NODES {
         rest.push(root - Vec3::Y * node as f32 * HAIR_BONE);
+    }
+    for chain in 0..CAPE_CHAINS {
+        for node in 0..CAPE_NODES {
+            rest.push(cape_rest(chain, node));
+        }
     }
     let inverse_binds: Vec<[f32; 16]> = rest
         .iter()
@@ -180,6 +234,12 @@ fn character() -> Vec<u8> {
         "SCALAR",
         surface.indices.len(),
     );
+    let cape_index = add(
+        bytemuck::cast_slice(&cape_indices),
+        5125,
+        "SCALAR",
+        cape_indices.len(),
+    );
     let inverse_bind = add(
         bytemuck::cast_slice(&inverse_binds),
         5126,
@@ -188,7 +248,12 @@ fn character() -> Vec<u8> {
     );
     let mut nodes = vec![
         serde_json::json!({"name": "character", "mesh": 0, "skin": 0}),
-        serde_json::json!({"name": "body", "children": [HEAD]}),
+        serde_json::json!({
+            "name": "body",
+            "children": std::iter::once(HEAD)
+                .chain((0..CAPE_CHAINS).map(|chain| cape_node(chain, 0)))
+                .collect::<Vec<_>>()
+        }),
         serde_json::json!({"name": "head", "translation": NECK.to_array(), "children": [HAIR]}),
     ];
     for node in 0..HAIR_NODES {
@@ -202,6 +267,20 @@ fn character() -> Vec<u8> {
             hair["children"] = serde_json::json!([HAIR as u32 + node + 1]);
         }
         nodes.push(hair);
+    }
+    for chain in 0..CAPE_CHAINS {
+        for node in 0..CAPE_NODES {
+            let mut cape = serde_json::json!({"name": format!("cape {chain} {node}")});
+            cape["translation"] = serde_json::json!(if node == 0 {
+                cape_rest(chain, 0).to_array()
+            } else {
+                [0., -CAPE_BONE, 0.]
+            });
+            if node + 1 < CAPE_NODES {
+                cape["children"] = serde_json::json!([cape_node(chain, node + 1)]);
+            }
+            nodes.push(cape);
+        }
     }
     let joints: Vec<usize> = (BODY..nodes.len()).collect();
     let (min, max) = surface
@@ -217,11 +296,20 @@ fn character() -> Vec<u8> {
         "buffers": [{"byteLength": bin.len()}],
         "bufferViews": views,
         "accessors": accessors,
-        "materials": [{"pbrMetallicRoughness": {"baseColorFactor": [0.75, 0.55, 0.35, 1.], "metallicFactor": 0., "roughnessFactor": 0.6}}],
-        "meshes": [{"primitives": [{
-            "attributes": {"POSITION": position, "NORMAL": normal, "JOINTS_0": joint, "WEIGHTS_0": weight},
-            "indices": index, "material": 0
-        }]}],
+        "materials": [
+            {"pbrMetallicRoughness": {"baseColorFactor": [0.75, 0.55, 0.35, 1.], "metallicFactor": 0., "roughnessFactor": 0.6}},
+            {"pbrMetallicRoughness": {"baseColorFactor": [0.5, 0.08, 0.1, 1.], "metallicFactor": 0., "roughnessFactor": 0.8}, "doubleSided": true}
+        ],
+        "meshes": [{"primitives": [
+            {
+                "attributes": {"POSITION": position, "NORMAL": normal, "JOINTS_0": joint, "WEIGHTS_0": weight},
+                "indices": index, "material": 0
+            },
+            {
+                "attributes": {"POSITION": position, "NORMAL": normal, "JOINTS_0": joint, "WEIGHTS_0": weight},
+                "indices": cape_index, "material": 1
+            }
+        ]}],
         "skins": [{"joints": joints, "inverseBindMatrices": inverse_bind}],
         "nodes": nodes,
         "scenes": [{"nodes": [0, BODY]}], "scene": 0
@@ -254,8 +342,9 @@ fn glb(document: &serde_json::Value, mut bin: Vec<u8>) -> Vec<u8> {
     bytes
 }
 
-/// The ponytail's chain and the head and torso colliders, sized from the
-/// same body measurements the mesh is built from.
+/// The ponytail's chain, the cape's chains as one open sheet, and the head
+/// and torso colliders, sized from the same body measurements the mesh is
+/// built from.
 fn spring_bones(rig: &Rig) -> SpringBones {
     let ponytail = Chain {
         tip: TIP,
@@ -263,6 +352,20 @@ fn spring_bones(rig: &Rig) -> SpringBones {
         gravity: 0.6,
         radius: HAIR_RADIUS,
         ..Chain::from_root(rig, HAIR)
+    };
+    let chains: Vec<Chain> = std::iter::once(ponytail)
+        .chain((0..CAPE_CHAINS).map(|chain| Chain {
+            tip: CAPE_BONE,
+            stiffness: 0.4,
+            drag: 0.5,
+            gravity: 0.8,
+            radius: CAPE_RADIUS,
+            ..Chain::from_root(rig, cape_node(chain, 0))
+        }))
+        .collect();
+    let cape = Sheet {
+        chains: (1..chains.len()).collect(),
+        closed: false,
     };
     let colliders = [
         Collider {
@@ -281,7 +384,7 @@ fn spring_bones(rig: &Rig) -> SpringBones {
             },
         },
     ];
-    SpringBones::new(rig, &[ponytail], &colliders).expect("the ponytail fits the rig")
+    SpringBones::new(rig, &chains, &[cape], &colliders).expect("the chains fit the rig")
 }
 
 /// Where the body stands at `t` seconds: still, then a walk along +Z at
@@ -382,7 +485,7 @@ async fn run(output_path: std::path::PathBuf, frames: u32) -> Result<(), Box<dyn
         eye: Vec3::ZERO,
     });
     input.directional_lights[0] = Some(DirectionalLight {
-        direction: Vec3::new(0.4, -1., -0.3),
+        direction: Vec3::new(-0.5, -1., 0.6),
         color: [1., 0.95, 0.9],
         illuminance: 2.,
         shadow: Some(DirectionalShadow {
@@ -423,9 +526,9 @@ async fn run(output_path: std::path::PathBuf, frames: u32) -> Result<(), Box<dyn
             },
         )?;
         scene.set_instance_deformation(&queue, instance, joints.matrices(), &[])?;
-        // A camera to the side of the body, following it.
+        // A camera behind the body and to its side, following it.
         let target = world.transform_point3(Vec3::Y * 1.2);
-        let eye = target + Vec3::new(2.6, 0.4, 0.6);
+        let eye = target + Vec3::new(1.6, 0.5, -2.2);
         input.camera.view = camera::rh::view::look_at_mat4(eye, target, Vec3::Y);
         input.camera.eye = eye;
         input.elapsed_seconds = f64::from(seconds);
@@ -580,6 +683,83 @@ mod tests {
         assert!(
             closest < 1e-3,
             "the ponytail never reached a collider: {closest}"
+        );
+    }
+
+    // Plausible defects: the colliders placed or sized differently from the
+    // mesh for the cape, or the cape's chains built wrongly from the
+    // generated rig.
+    // Oracle: the body's and the cape's rest geometry. Over the walk at
+    // 60 Hz, each cape tail (every cape node below a root, and each tip)
+    // stays at least the cape's radius outside the torso's capsule and the
+    // head's sphere, less 0.1 mm, while the cape (a tail, or a link between
+    // two chains' tails, which hold it off between them) lies within 1 mm
+    // of the torso's surface grown by its radius.
+    #[test]
+    fn the_cape_stays_outside_the_body() {
+        let character = asset::load_slice(&character()).expect("the generated character loads");
+        let rig = &character.rig;
+        let mut springs = spring_bones(rig);
+        let mut locals = Vec::new();
+        let mut joints = JointMatrices::new();
+        let mut closest = f32::INFINITY;
+        for frame in 0..300 {
+            let world = world_at(frame as f32 / 60.);
+            let mut pose = Pose::rest(rig);
+            springs.step(rig, &mut pose, world, Vec3::ZERO, 1. / 60.);
+            pose.local_matrices(&mut locals);
+            rig.joint_matrices(&locals, &mut joints).unwrap();
+            // Each joint matrix times its node's rest position is its place.
+            let place = |node: usize, at: Vec3| {
+                world.transform_point3(joints.matrices()[node - BODY].transform_point3(at))
+            };
+            let tails: Vec<Vec<Vec3>> = (0..CAPE_CHAINS)
+                .map(|chain| {
+                    (1..=CAPE_NODES)
+                        .map(|node| {
+                            place(
+                                cape_node(chain, node.min(CAPE_NODES - 1)),
+                                cape_rest(chain, node),
+                            )
+                        })
+                        .collect()
+                })
+                .collect();
+            let [bottom, top] = TORSO.map(|point| place(BODY, point));
+            // How far a point is from the torso's segment.
+            let from_torso = |point: Vec3| {
+                let along = ((point - bottom).dot(top - bottom) / (top - bottom).length_squared())
+                    .clamp(0., 1.);
+                point.distance(bottom + (top - bottom) * along)
+            };
+            for pair in tails.windows(2) {
+                for (&a, &b) in pair[0].iter().zip(&pair[1]) {
+                    // The nearest point of the link to the torso's segment,
+                    // found by sampling it finely enough for the guard.
+                    for step in 0..=100 {
+                        let point = a.lerp(b, step as f32 / 100.);
+                        closest = closest.min(from_torso(point) - TORSO_RADIUS - CAPE_RADIUS);
+                    }
+                }
+            }
+            let skull = place(HEAD, NECK + SKULL);
+            for tail in tails.iter().flatten() {
+                let torso = from_torso(*tail);
+                closest = closest.min(torso - TORSO_RADIUS - CAPE_RADIUS);
+                for (name, away, reach) in [
+                    ("head", tail.distance(skull), SKULL_RADIUS),
+                    ("torso", torso, TORSO_RADIUS),
+                ] {
+                    assert!(
+                        away >= reach + CAPE_RADIUS - 1e-4,
+                        "frame {frame}: a cape tail is {away} from the {name}'s collider"
+                    );
+                }
+            }
+        }
+        assert!(
+            closest < 1e-3,
+            "the cape came no nearer than {closest} to the torso"
         );
     }
 }

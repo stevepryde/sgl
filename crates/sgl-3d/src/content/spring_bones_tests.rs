@@ -3,7 +3,7 @@
 use glam::{Mat4, Quat, Vec3, Vec4};
 use wasm_bindgen_test::wasm_bindgen_test;
 
-use super::{Chain, ChainField, Collider, ColliderShape, SpringBones, SpringBonesError};
+use super::{Chain, ChainField, Collider, ColliderShape, Sheet, SpringBones, SpringBonesError};
 use crate::animation::Pose;
 use crate::deformation::{Joint, JointMatrices, MorphWeight, Node, Rig, Transform};
 
@@ -130,6 +130,7 @@ fn at_rest_without_forces_the_pose_is_unchanged() {
             ..chain(&rig)
         }],
         &[],
+        &[],
     )
     .unwrap();
     let world = Mat4::from_rotation_translation(Quat::from_rotation_y(0.8), Vec3::new(3., 0., -2.));
@@ -192,6 +193,7 @@ fn step_writes_only_the_chains_unit_rotations() {
             drag: 0.1,
             ..Chain::default()
         }],
+        &[],
         &[],
     )
     .unwrap();
@@ -277,6 +279,7 @@ fn one_bone_settles_between_its_rest_direction_and_down() {
                 ..chain(&rig)
             }],
             &[],
+            &[],
         )
         .unwrap();
         let mut last = Vec3::ZERO;
@@ -307,7 +310,7 @@ fn one_bone_settles_between_its_rest_direction_and_down() {
 #[wasm_bindgen_test(unsupported = test)]
 fn moving_sideways_makes_the_tip_lag_and_return() {
     let rig = rig(&[Vec3::NEG_Y * 0.2; 3]);
-    let mut springs = SpringBones::new(&rig, &[chain(&rig)], &[]).unwrap();
+    let mut springs = SpringBones::new(&rig, &[chain(&rig)], &[], &[]).unwrap();
     // 2 m/s along +X for half a second, then still.
     let motion = |t: f32| Mat4::from_translation(Vec3::X * 2. * t.min(0.5));
     run(
@@ -380,6 +383,7 @@ fn drape_over(collider: ColliderShape, reach: f32, scale: f32, distance: impl Fn
         let mut springs = SpringBones::new(
             &rig,
             std::slice::from_ref(&chain),
+            &[],
             &[Collider {
                 node: 0,
                 shape: collider,
@@ -472,6 +476,7 @@ fn tip_at_rate(rate: u32) -> [Vec3; 2] {
             ..chain(&rig)
         }],
         &[],
+        &[],
     )
     .unwrap();
     let dt = 1. / rate as f32;
@@ -531,7 +536,7 @@ fn the_frame_rate_does_not_change_the_motion() {
 #[wasm_bindgen_test(unsupported = test)]
 fn reset_after_a_teleport_keeps_the_settled_pose() {
     let rig = rig(&[Vec3::new(0.1, -0.15, 0.05); 3]);
-    let mut springs = SpringBones::new(&rig, &[chain(&rig)], &[]).unwrap();
+    let mut springs = SpringBones::new(&rig, &[chain(&rig)], &[], &[]).unwrap();
     // A swing that settles: 0.3 m along Z, then still for 3 s.
     let here = |t: f32| Mat4::from_translation(Vec3::Z * 0.6 * t.min(0.5));
     run(
@@ -579,6 +584,7 @@ fn non_finite_inputs_and_a_zero_length_bone_leave_a_finite_pose() {
             tip: 0.1,
             ..chain(&rig)
         }],
+        &[],
         &[Collider {
             node: 0,
             shape: ColliderShape::Sphere {
@@ -642,8 +648,9 @@ fn each_refusal_names_its_cause() {
         node,
         shape: ColliderShape::Sphere { center, radius },
     };
-    let refused =
-        |chains: &[Chain], colliders: &[Collider]| SpringBones::new(&rig, chains, colliders).err();
+    let refused = |chains: &[Chain], colliders: &[Collider]| {
+        SpringBones::new(&rig, chains, &[], colliders).err()
+    };
     assert_eq!(
         refused(
             &[
@@ -684,6 +691,7 @@ fn each_refusal_names_its_cause() {
                     ..Chain::default()
                 }
             ],
+            &[],
             &[]
         )
         .err(),
@@ -815,6 +823,7 @@ fn run_in_units(factor: f32) -> Vec<Vec<Vec3>> {
             radius: 0.02 * factor,
             ..chain(&rig)
         }],
+        &[],
         &[Collider {
             node: 0,
             shape: ColliderShape::Sphere {
@@ -891,6 +900,7 @@ fn a_doubled_instance_doubles_lengths_and_colliders() {
             ..chain(&rig)
         }],
         &[],
+        &[],
     )
     .unwrap();
     let mut last = Vec3::ZERO;
@@ -966,7 +976,7 @@ fn the_order_of_chains_does_not_change_the_pose() {
         )
     };
     let poses = |chains: &[Chain]| {
-        let mut springs = SpringBones::new(&rig, chains, &[]).unwrap();
+        let mut springs = SpringBones::new(&rig, chains, &[], &[]).unwrap();
         let mut poses = Vec::new();
         run(
             &mut springs,
@@ -997,7 +1007,7 @@ fn the_order_of_chains_does_not_change_the_pose() {
 #[wasm_bindgen_test(unsupported = test)]
 fn a_hitch_does_not_whip_the_chain_ahead() {
     let rig = rig(&[Vec3::NEG_Y * 0.15; 3]);
-    let mut springs = SpringBones::new(&rig, &[chain(&rig)], &[]).unwrap();
+    let mut springs = SpringBones::new(&rig, &[chain(&rig)], &[], &[]).unwrap();
     // 3 m/s along +X.
     let motion = |t: f32| Mat4::from_translation(Vec3::X * 3. * t);
     let mut behind = 0.;
@@ -1026,4 +1036,905 @@ fn a_hitch_does_not_whip_the_chain_ahead() {
         behind < 0.,
         "after the hitch the tip is {behind} m along the motion"
     );
+}
+
+/// The length of every bone of `hanging`'s chains, their tips included.
+const BONE: f32 = 0.08;
+/// `hanging`'s leg: a node on the body at its origin, which a test moves
+/// through the pose to carry a sphere.
+const LEG: usize = 1;
+/// The chains' radius, `Chain`'s default.
+const RADIUS: f32 = 0.02;
+
+/// A body (node 0) with a leg (node 1) and a hip (node 2) at its origin,
+/// and a chain from each of `roots` of `nodes` nodes, each `bone` from the
+/// one before, and a tip `BONE` on along it, so as many bones as nodes.
+/// Odd chains hang from the hip, so they are solved after the even ones
+/// whatever order they are given in. No node is rotated.
+fn hanging(roots: &[Vec3], nodes: &[usize], bone: Vec3) -> (Rig, Vec<Chain>) {
+    let mut rig = vec![
+        node(None, Vec3::ZERO, Quat::IDENTITY),
+        node(Some(0), Vec3::ZERO, Quat::IDENTITY),
+        node(Some(0), Vec3::ZERO, Quat::IDENTITY),
+    ];
+    let mut chains = Vec::new();
+    for (index, (&root, &count)) in roots.iter().zip(nodes).enumerate() {
+        let first = rig.len();
+        let parent = if index % 2 == 0 { 0 } else { 2 };
+        rig.push(node(Some(parent), root, Quat::IDENTITY));
+        for _ in 1..count {
+            rig.push(node(Some(rig.len() - 1), bone, Quat::IDENTITY));
+        }
+        chains.push(Chain {
+            nodes: (first..first + count).collect(),
+            tip: BONE,
+            gravity: 0.5,
+            ..Chain::default()
+        });
+    }
+    (with_joints(rig), chains)
+}
+
+/// `count` roots evenly round a circle of `radius` about the body's Y axis
+/// at 1 m, the first on +X, turning towards +Z.
+fn ring(count: usize, radius: f32) -> Vec<Vec3> {
+    (0..count)
+        .map(|index| {
+            let angle = index as f32 / count as f32 * std::f32::consts::TAU;
+            Vec3::new(angle.cos() * radius, 1., angle.sin() * radius)
+        })
+        .collect()
+}
+
+/// A sphere of `radius` on the leg.
+fn leg(radius: f32) -> Collider {
+    Collider {
+        node: LEG,
+        shape: ColliderShape::Sphere {
+            center: Vec3::ZERO,
+            radius,
+        },
+    }
+}
+
+/// Each chain's tails in the world as `pose` draws them: its nodes after
+/// the first, then its tip, `tip` on from the last node the way it lies
+/// from its parent at rest.
+fn drawn_tails(rig: &Rig, pose: &Pose, world: Mat4, chains: &[Chain]) -> Vec<Vec<Vec3>> {
+    let mut locals = Vec::new();
+    let mut joints = JointMatrices::new();
+    pose.local_matrices(&mut locals);
+    rig.joint_matrices(&locals, &mut joints).unwrap();
+    let globals = joints.matrices();
+    chains
+        .iter()
+        .map(|chain| {
+            let last = *chain.nodes.last().unwrap();
+            let tip = rig.nodes[last].rest.translation.normalize() * chain.tip;
+            chain.nodes[1..]
+                .iter()
+                .map(|&node| globals[node].w_axis.truncate())
+                .chain([globals[last].transform_point3(tip)])
+                .map(|point| world.transform_point3(point))
+                .collect()
+        })
+        .collect()
+}
+
+/// Steps `springs` at `rate` calls a second for `seconds`, each call with
+/// the rest pose but the leg at `leg(t)` in the body's space and the
+/// instance at `world(t)`, and hands each call's drawn tails, world and
+/// leg, and the solver, to `check`.
+#[allow(clippy::too_many_arguments)]
+fn kick(
+    springs: &mut SpringBones,
+    rig: &Rig,
+    chains: &[Chain],
+    rate: u32,
+    seconds: f32,
+    leg: impl Fn(f32) -> Vec3,
+    world: impl Fn(f32) -> Mat4,
+    mut check: impl FnMut(usize, &[Vec<Vec3>], Mat4, Vec3, &SpringBones),
+) {
+    let dt = 1. / rate as f32;
+    for frame in 1..=(seconds * rate as f32).round() as usize {
+        let t = frame as f32 * dt;
+        let (world, leg) = (world(t), leg(t));
+        let mut pose = Pose::rest(rig);
+        pose.nodes[LEG].translation = leg;
+        springs.step(rig, &mut pose, world, Vec3::ZERO, dt);
+        let tails = drawn_tails(rig, &pose, world, chains);
+        check(frame, &tails, world, leg, springs);
+    }
+}
+
+/// How far the distance between chain `a`'s and chain `b`'s tails at each
+/// depth both reach strays from its length in `rest`, the most, as a
+/// fraction of that length.
+fn stray(rest: &[Vec<Vec3>], tails: &[Vec<Vec3>], [a, b]: [usize; 2]) -> f32 {
+    rest[a]
+        .iter()
+        .zip(&rest[b])
+        .zip(tails[a].iter().zip(&tails[b]))
+        .map(|((rest_a, rest_b), (a, b))| {
+            let rest = rest_a.distance(*rest_b);
+            (a.distance(*b) - rest).abs() / rest
+        })
+        .fold(0., f32::max)
+}
+
+/// The leg's path: from `from` to `to` in the body's space over a second,
+/// then still.
+fn stride(from: Vec3, to: Vec3) -> impl Fn(f32) -> Vec3 {
+    move |t| from.lerp(to, t.min(1.))
+}
+
+/// A turned and moved instance, still for 1.5 s, then swung 0.25 m either
+/// way along the body's X and back at 1 m/s.
+fn swing(t: f32) -> Mat4 {
+    let phase = (t - 1.5).max(0.) % 1.;
+    let x = if phase < 0.25 {
+        phase
+    } else if phase < 0.75 {
+        0.5 - phase
+    } else {
+        phase - 1.
+    };
+    Mat4::from_rotation_translation(Quat::from_rotation_y(0.5), Vec3::new(1., 0., 2.))
+        * Mat4::from_translation(Vec3::X * x)
+}
+
+/// Chains from `roots`, `nodes` long, held out level along +Z, which
+/// gravity drops (stiffness 0, gravity 1) onto a sphere 0.07 in radius on
+/// the leg at `center` (in reach of the roots, as a body part under them),
+/// left to drape for 1.5 s and swung along X for 2 s more, at `rate` calls
+/// a second with `sheets`; each call's drawn tails go to `check`, with
+/// their rest places.
+fn dropped(
+    roots: &[Vec3],
+    nodes: &[usize],
+    sheets: &[Sheet],
+    center: Vec3,
+    rate: u32,
+    mut check: impl FnMut(&[Vec<Vec3>], &[Vec<Vec3>]),
+) {
+    let (rig, chains) = hanging(roots, nodes, Vec3::Z * BONE);
+    let chains: Vec<Chain> = chains
+        .into_iter()
+        .map(|chain| Chain {
+            stiffness: 0.,
+            gravity: 1.,
+            ..chain
+        })
+        .collect();
+    let mut springs = SpringBones::new(&rig, &chains, sheets, &[leg(0.07)]).unwrap();
+    let rest = drawn_tails(&rig, &Pose::rest(&rig), swing(0.), &chains);
+    kick(
+        &mut springs,
+        &rig,
+        &chains,
+        rate,
+        3.5,
+        |_| center,
+        swing,
+        |_, tails, _, _, _| check(&rest, tails),
+    );
+}
+
+/// The most chain pair `pair`'s spacing strays as they are `dropped`.
+fn dropped_stray(
+    roots: &[Vec3],
+    nodes: &[usize],
+    sheets: &[Sheet],
+    center: Vec3,
+    rate: u32,
+    pair: [usize; 2],
+) -> f32 {
+    let mut most = 0f32;
+    dropped(roots, nodes, sheets, center, rate, |rest, tails| {
+        most = most.max(stray(rest, tails, pair));
+    });
+    most
+}
+
+/// Under `dropped`'s chains: a sphere between two chains 0.1 m apart along
+/// X, below their third tails, wider than their gap.
+const BETWEEN: Vec3 = Vec3::new(0., 0.88, 0.16);
+
+// Plausible defects: links that do nothing, link the wrong bones, or are
+// undone by the chains' restore.
+// Oracle: the rig's rest geometry. Two chains 0.1 m apart fall onto a
+// sphere between them, wider than their gap, and are swung across it.
+// Apart, each slides off its side of the sphere; as a sheet, their
+// same-depth tails keep within 10% of their 0.1 m spacing as the pair
+// drapes over it, at 30, 60, 90 and 144 calls a second.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_sheet_keeps_its_spacing_where_a_collider_parts_separate_chains() {
+    let roots = [Vec3::new(-0.05, 1., 0.), Vec3::new(0.05, 1., 0.)];
+    let apart = dropped_stray(&roots, &[4; 2], &[], BETWEEN, 60, [0, 1]);
+    assert!(
+        apart > 0.1,
+        "apart, the chains' spacing strays only {apart} of its length"
+    );
+    let sheet = Sheet {
+        chains: vec![0, 1],
+        closed: false,
+    };
+    for rate in [30, 60, 90, 144] {
+        let linked = dropped_stray(
+            &roots,
+            &[4; 2],
+            std::slice::from_ref(&sheet),
+            BETWEEN,
+            rate,
+            [0, 1],
+        );
+        assert!(
+            linked < 0.1,
+            "{rate} Hz: as a sheet, the chains' spacing strays {linked} of its length"
+        );
+    }
+}
+
+// Plausible defect: `closed` ignored, or linking the wrong ends.
+// Oracle: the rig's rest geometry. A skirt of six chains round a torso
+// capsule, each 0.15 m from its neighbours, swung along X by the body.
+// Open, the last and the first are the sheet's free edges and swing apart;
+// closed, they are linked and keep within 10% of their spacing. The torso
+// clears the links by the chains' radius at rest, as an asset's must: six
+// chains 0.15 m from the axis put each link's middle 0.15 cos 30° = 0.130 m
+// from it, so the torso's 0.10 m and the chains' 0.02 m leave it clear.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_closed_sheet_links_its_last_chain_to_its_first() {
+    let (rig, chains) = hanging(&ring(6, 0.15), &[5; 6], Vec3::NEG_Y * BONE);
+    let torso = Collider {
+        node: 0,
+        shape: ColliderShape::Capsule {
+            head: Vec3::Y * 0.4,
+            tail: Vec3::Y * 1.1,
+            radius: 0.10,
+        },
+    };
+    let gap = |closed| {
+        let sheet = Sheet {
+            chains: (0..6).collect(),
+            closed,
+        };
+        let mut springs = SpringBones::new(&rig, &chains, &[sheet], &[torso]).unwrap();
+        let rest = drawn_tails(&rig, &Pose::rest(&rig), swing(0.), &chains);
+        let mut most = 0f32;
+        kick(
+            &mut springs,
+            &rig,
+            &chains,
+            60,
+            3.5,
+            |_| Vec3::ZERO,
+            swing,
+            |_, tails, _, _, _| most = most.max(stray(&rest, tails, [5, 0])),
+        );
+        most
+    };
+    let (open, closed) = (gap(false), gap(true));
+    assert!(
+        open > 0.1,
+        "open, the last and first chains' spacing strays only {open} of its length"
+    );
+    assert!(
+        closed < 0.1,
+        "closed, the last and first chains' spacing strays {closed} of its length"
+    );
+}
+
+// Plausible defects: links run past the shorter chain's last bone (into
+// another chain's bones, or out of range), or stop short of it.
+// Oracle: the rig's rest geometry, and an equivalence. A chain of three
+// bones beside one of six as a sheet (given second-first, and solved
+// first: the short chain is followed in the solve by a third, lone chain
+// well away) fall onto a sphere under the short chain's tails. Those keep
+// within 10% of their spacing, and the lone chain moves bit for bit as it
+// does with no sheet at all.
+#[wasm_bindgen_test(unsupported = test)]
+fn chains_of_unequal_length_link_down_to_the_shorter() {
+    let roots = [
+        Vec3::new(0.05, 1., 0.),
+        Vec3::new(-0.05, 1., 0.),
+        Vec3::new(0.6, 1., 0.),
+    ];
+    let run = |sheets: &[Sheet]| {
+        let (mut most, mut lone) = (0f32, Vec::new());
+        dropped(&roots, &[3, 6, 4], sheets, BETWEEN, 60, |rest, tails| {
+            most = most.max(stray(rest, tails, [1, 0]));
+            lone.push(tails[2].clone());
+        });
+        (most, lone)
+    };
+    let (_, alone) = run(&[]);
+    let (most, beside) = run(&[Sheet {
+        chains: vec![1, 0],
+        closed: false,
+    }]);
+    assert!(
+        most < 0.1,
+        "the linked depths' spacing strays {most} of its length"
+    );
+    assert_eq!(beside, alone, "a chain in no sheet moved with the sheet");
+}
+
+// Plausible defects: a link's length taken from the rig's rest pose rather
+// than the pose given, or in the asset's units rather than the world's, so
+// links pull a still sheet out of its pose.
+// Oracle: the pose given. Without gravity or force, a sheet whose pose
+// spreads its roots 1.3 times wider than the rig's rest and tilts every
+// bone, under a turned, moved and 1.5 times scaled instance, keeps that
+// pose's rotations.
+#[wasm_bindgen_test(unsupported = test)]
+fn at_rest_a_sheet_keeps_the_pose_given() {
+    let (rig, chains) = hanging(&ring(4, 0.12), &[4; 4], Vec3::NEG_Y * BONE);
+    let chains: Vec<Chain> = chains
+        .into_iter()
+        .map(|chain| Chain {
+            gravity: 0.,
+            ..chain
+        })
+        .collect();
+    let mut springs = SpringBones::new(
+        &rig,
+        &chains,
+        &[Sheet {
+            chains: (0..4).collect(),
+            closed: true,
+        }],
+        &[],
+    )
+    .unwrap();
+    let mut given = Pose::rest(&rig);
+    for chain in &chains {
+        given.nodes[chain.nodes[0]].translation *= Vec3::new(1.3, 1., 1.3);
+        for &node in &chain.nodes {
+            given.nodes[node].rotation = Quat::from_rotation_x(0.3);
+        }
+    }
+    let world = Mat4::from_scale_rotation_translation(
+        Vec3::splat(1.5),
+        Quat::from_rotation_y(0.8),
+        Vec3::new(3., 0., -2.),
+    );
+    for frame in 1..=120 {
+        let mut pose = given.clone();
+        springs.step(&rig, &mut pose, world, Vec3::ZERO, FRAME);
+        for (index, (solved, given)) in pose.nodes.iter().zip(&given.nodes).enumerate() {
+            assert!(
+                solved.rotation.dot(given.rotation).abs() > 1. - 1e-6,
+                "frame {frame}: node {index} turned to {} from {}",
+                solved.rotation,
+                given.rotation
+            );
+        }
+    }
+}
+
+// Plausible defects: tails the links moved left off their bones' lengths,
+// or a chain hanging from a sheet's chain left on its parent's tail before
+// the links moved it.
+// Oracle: the rig's rest geometry. Through a kick of a closed skirt under
+// an instance scaled by 1.5, every solved tail lies 1.5 · `BONE` from its
+// bone's head, within 0.1 mm (f32 rounding at this scale, as the collider
+// tests allow): the chain's root, placed by the instance, or the tail
+// before it; a tassel hangs from a skirt chain's second node at its third
+// node's place, so its head is the second bone's tail.
+#[wasm_bindgen_test(unsupported = test)]
+fn bones_keep_their_lengths_in_a_sheet() {
+    let (mut rig, mut chains) = hanging(&ring(6, 0.12), &[5; 6], Vec3::NEG_Y * BONE);
+    let tassel = rig.nodes.len();
+    for index in 0..3 {
+        let parent = if index == 0 {
+            chains[0].nodes[1]
+        } else {
+            tassel + index - 1
+        };
+        rig.nodes
+            .push(node(Some(parent), Vec3::NEG_Y * BONE, Quat::IDENTITY));
+        rig.joints.push(Joint {
+            node: tassel + index,
+            inverse_bind: Mat4::IDENTITY,
+        });
+    }
+    chains.push(Chain {
+        nodes: (tassel..tassel + 3).collect(),
+        ..chains[0].clone()
+    });
+    let mut springs = SpringBones::new(
+        &rig,
+        &chains,
+        &[Sheet {
+            chains: (0..6).collect(),
+            closed: true,
+        }],
+        &[leg(0.07)],
+    )
+    .unwrap();
+    let world = |_| {
+        Mat4::from_scale_rotation_translation(
+            Vec3::splat(1.5),
+            Quat::from_rotation_y(0.5),
+            Vec3::new(1., 0., 2.),
+        )
+    };
+    let between = Quat::from_rotation_y(30f32.to_radians()) * Vec3::X;
+    kick(
+        &mut springs,
+        &rig,
+        &chains,
+        60,
+        1.5,
+        stride(Vec3::Y * 0.75, Vec3::Y * 0.75 + between * 0.35),
+        world,
+        |frame, _, world, _, springs| {
+            let tail = |node: usize| {
+                springs
+                    .bones
+                    .iter()
+                    .find(|bone| bone.node == node)
+                    .unwrap()
+                    .tail
+            };
+            for (index, chain) in chains.iter().enumerate() {
+                let mut head = if index == 6 {
+                    tail(chains[0].nodes[1])
+                } else {
+                    world.transform_point3(rig.nodes[chain.nodes[0]].rest.translation)
+                };
+                for &node in &chain.nodes {
+                    let length = tail(node).distance(head);
+                    assert!(
+                        (length - 1.5 * BONE).abs() < 1e-4,
+                        "frame {frame}: chain {index}'s bone at node {node} is {length} long"
+                    );
+                    head = tail(node);
+                }
+            }
+        },
+    );
+}
+
+// Plausible defects: the links' moves not taken back through the collider
+// pass, or the written pose between two steps leaving it.
+// Oracle: the colliders' geometry. A closed skirt round a torso capsule,
+// kicked by the leg's sphere and then swung along X by the body, at 30, 60,
+// 90 and 144 calls a second: every tail drawn stays at least the two radii
+// less 0.1 mm from each collider's centre or segment, and the sphere,
+// grown by the chains' radius, comes within 1 mm of the sheet (a tail, or
+// a link between two chains' tails at one depth, which hold it off
+// between them), so the scenario presses it on the sheet. At 60 calls a second each call runs one step in its own world, so
+// the solver's tails, which the pose written covers for, are held to the
+// same bound there.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_sheet_stays_out_of_colliders() {
+    let (rig, chains) = hanging(&ring(6, 0.12), &[5; 6], Vec3::NEG_Y * BONE);
+    let sheet = Sheet {
+        chains: (0..6).collect(),
+        closed: true,
+    };
+    let (bottom, top) = (Vec3::Y * 0.5, Vec3::Y * 1.1);
+    let torso = Collider {
+        node: 0,
+        shape: ColliderShape::Capsule {
+            head: bottom,
+            tail: top,
+            radius: 0.06,
+        },
+    };
+    let between = Quat::from_rotation_y(30f32.to_radians()) * Vec3::X;
+    for rate in [30, 60, 90, 144] {
+        let mut springs = SpringBones::new(
+            &rig,
+            &chains,
+            std::slice::from_ref(&sheet),
+            &[leg(0.07), torso],
+        )
+        .unwrap();
+        let mut closest = f32::INFINITY;
+        kick(
+            &mut springs,
+            &rig,
+            &chains,
+            rate,
+            3.5,
+            stride(Vec3::Y * 0.75, Vec3::Y * 0.75 + between * 0.35),
+            swing,
+            |frame, tails, world, leg, springs| {
+                let inverse = world.inverse();
+                for (index, chain) in tails.iter().enumerate() {
+                    let next = &tails[(index + 1) % tails.len()];
+                    for (&a, &b) in chain.iter().zip(next) {
+                        let [a, b] = [a, b].map(|point| inverse.transform_point3(point));
+                        let along = ((leg - a).dot(b - a) / (b - a).length_squared()).clamp(0., 1.);
+                        closest = closest.min(leg.distance(a + (b - a) * along) - 0.07 - RADIUS);
+                    }
+                }
+                let solved = springs.bones.iter().map(|bone| bone.tail);
+                let solved = solved.filter(|_| rate == 60);
+                for tail in tails.iter().flatten().copied().chain(solved) {
+                    let local = world.inverse().transform_point3(tail);
+                    let along = ((local - bottom).dot(top - bottom)
+                        / (top - bottom).length_squared())
+                    .clamp(0., 1.);
+                    for (name, away, reach) in [
+                        ("leg", local.distance(leg), 0.07),
+                        (
+                            "torso",
+                            local.distance(bottom + (top - bottom) * along),
+                            0.06,
+                        ),
+                    ] {
+                        if name == "leg" {
+                            closest = closest.min(away - reach - RADIUS);
+                        }
+                        assert!(
+                            away >= reach + RADIUS - 1e-4,
+                            "{rate} Hz, call {frame}: a tail is {away} from the {name}'s collider"
+                        );
+                    }
+                }
+            },
+        );
+        assert!(
+            closest < 1e-3,
+            "{rate} Hz: the sheet came no nearer than {closest} to the leg"
+        );
+    }
+}
+
+// Plausible defect: a sheet refusal missed, or reported for the wrong
+// sheet or chain.
+// Oracle: each case breaks exactly one documented requirement of `new`.
+#[wasm_bindgen_test(unsupported = test)]
+fn each_sheet_refusal_names_its_cause() {
+    let (rig, chains) = hanging(&ring(3, 0.12), &[3; 3], Vec3::NEG_Y * BONE);
+    let sheet = |chains: &[usize]| Sheet {
+        chains: chains.to_vec(),
+        closed: false,
+    };
+    let refused = |sheets: &[Sheet]| SpringBones::new(&rig, &chains, sheets, &[]).err();
+    assert_eq!(
+        refused(&[sheet(&[0, 1]), sheet(&[2, 5])]),
+        Some(SpringBonesError::SheetChain { sheet: 1, chain: 5 })
+    );
+    assert_eq!(
+        refused(&[sheet(&[0, 1]), sheet(&[2, 1])]),
+        Some(SpringBonesError::SharedChain {
+            first: 0,
+            second: 1,
+            chain: 1
+        })
+    );
+    assert_eq!(
+        refused(&[sheet(&[0, 1, 0])]),
+        Some(SpringBonesError::SharedChain {
+            first: 0,
+            second: 0,
+            chain: 0
+        })
+    );
+    assert!(refused(&[sheet(&[2, 0, 1])]).is_none());
+}
+
+// Plausible defects: links across the grid's cells, or anything else that
+// keeps a sheet from shearing, so a skirt cannot swing the way the body
+// moves or the wind blows.
+// Oracle: the closed form of `one_bone_settles_between_its_rest_direction_and_down`
+// at s = 0, with a level force added to gravity: every bone settles along
+// normalize(g·down + force). Six parallel chains hanging in a ring, tied as
+// a closed sheet, all turning the same way, keep every link between tails
+// at one depth at its length, so the sheet must settle as its chains do.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_closed_sheet_shears_as_its_chains_swing() {
+    let (rig, chains) = hanging(&ring(6, 0.12), &[5; 6], Vec3::NEG_Y * BONE);
+    let chains: Vec<Chain> = chains
+        .into_iter()
+        .map(|chain| Chain {
+            stiffness: 0.,
+            gravity: 1.,
+            ..chain
+        })
+        .collect();
+    let mut springs = SpringBones::new(
+        &rig,
+        &chains,
+        &[Sheet {
+            chains: (0..6).collect(),
+            closed: true,
+        }],
+        &[],
+    )
+    .unwrap();
+    let world = Mat4::from_rotation_translation(Quat::from_rotation_y(0.7), Vec3::new(1., 2., 3.));
+    let force = Vec3::new(0.6, 0., -0.3);
+    let mut last = Pose::rest(&rig);
+    run(
+        &mut springs,
+        &rig,
+        600,
+        FRAME,
+        force,
+        |_| world,
+        |_, pose, _| last = pose.clone(),
+    );
+    let at = positions(&rig, &last, world);
+    let tails = drawn_tails(&rig, &last, world, &chains);
+    let expected = force + Vec3::NEG_Y;
+    for (index, chain) in chains.iter().enumerate() {
+        let mut head = at[chain.nodes[0]];
+        for &tail in &tails[index] {
+            assert_direction(tail - head, expected, 1e-3);
+            head = tail;
+        }
+    }
+}
+
+/// Two chains 0.1 m apart tied as a sheet, one losing a tenth of its
+/// motion a step and the other six tenths, so apart they swing apart, on a
+/// body that moves 1 m/s along X and grows from 1 to 2 times its size
+/// over half a second, then holds, at `rate` calls a second. Returns both
+/// chains' tails at 0.5 s and at 1 s.
+fn sheet_at_rate(rate: u32) -> [Vec<Vec<Vec3>>; 2] {
+    let (rig, chains) = hanging(
+        &[Vec3::new(-0.05, 1., 0.), Vec3::new(0.05, 1., 0.)],
+        &[4; 2],
+        Vec3::NEG_Y * BONE,
+    );
+    let chains = [
+        Chain {
+            drag: 0.1,
+            ..chains[0].clone()
+        },
+        Chain {
+            drag: 0.6,
+            ..chains[1].clone()
+        },
+    ];
+    let mut springs = SpringBones::new(
+        &rig,
+        &chains,
+        &[Sheet {
+            chains: vec![0, 1],
+            closed: false,
+        }],
+        &[],
+    )
+    .unwrap();
+    let motion = |t: f32| {
+        let t = t.min(0.5);
+        Mat4::from_translation(Vec3::X * t) * Mat4::from_scale(Vec3::splat(1. + 2. * t))
+    };
+    springs.step(&rig, &mut Pose::rest(&rig), motion(0.), Vec3::ZERO, 0.);
+    let mut tails = [Vec::new(), Vec::new()];
+    run(
+        &mut springs,
+        &rig,
+        rate as usize,
+        1. / rate as f32,
+        Vec3::ZERO,
+        motion,
+        |frame, pose, world| {
+            if frame as u32 * 2 == rate {
+                tails[0] = drawn_tails(&rig, pose, world, &chains);
+            }
+            if frame as u32 == rate {
+                tails[1] = drawn_tails(&rig, pose, world, &chains);
+            }
+        },
+    );
+    tails
+}
+
+// Plausible defects: a link's length taken from the call's world rather
+// than each fixed step's, or a length the sheet's rounds hold from another
+// step, so a sheet on a growing body moves differently at another rate.
+// Oracle: the equivalence of `the_frame_rate_does_not_change_the_motion`:
+// the motion is linear between calls at every rate, so the steps are the
+// same at 30, 60 and 144 calls a second, to rounding under 1 mm.
+#[wasm_bindgen_test(unsupported = test)]
+fn the_frame_rate_does_not_change_a_sheet() {
+    let at_60 = sheet_at_rate(60);
+    for rate in [30, 144] {
+        for (time, (tails, reference)) in sheet_at_rate(rate).iter().zip(&at_60).enumerate() {
+            for (tail, expected) in tails.iter().flatten().zip(reference.iter().flatten()) {
+                assert!(
+                    tail.distance(*expected) < 1e-3,
+                    "at {} s and {rate} calls a second a tail is at {tail}, at 60 {expected}",
+                    (time + 1) as f32 * 0.5
+                );
+            }
+        }
+    }
+}
+
+/// Two chains 0.1 m apart tied as a sheet, hanging, with a sphere 0.02 m
+/// in radius just behind the middle of their second link (0.04 m with the
+/// chains' radius, so it misses both tails and presses the link 2 cm
+/// forward), settled for ten seconds under a turned, moved instance scaled
+/// by `scale`, with stiffness and gravity, which are in world units, scaled
+/// with it. Returns the tails' offsets from the instance's origin.
+fn pressed(scale: f32) -> Vec<Vec3> {
+    let (rig, chains) = hanging(
+        &[Vec3::new(-0.05, 1., 0.), Vec3::new(0.05, 1., 0.)],
+        &[4; 2],
+        Vec3::NEG_Y * BONE,
+    );
+    let chains: Vec<Chain> = chains
+        .into_iter()
+        .map(|chain| Chain {
+            stiffness: chain.stiffness * scale,
+            gravity: chain.gravity * scale,
+            ..chain
+        })
+        .collect();
+    let sphere = Collider {
+        node: 0,
+        shape: ColliderShape::Sphere {
+            center: Vec3::new(0., 1. - 2. * BONE, -0.02),
+            radius: 0.02,
+        },
+    };
+    let mut springs = SpringBones::new(
+        &rig,
+        &chains,
+        &[Sheet {
+            chains: vec![0, 1],
+            closed: false,
+        }],
+        &[sphere],
+    )
+    .unwrap();
+    let origin = Vec3::new(1., 2., 3.);
+    let world = Mat4::from_scale_rotation_translation(
+        Vec3::splat(scale),
+        Quat::from_rotation_y(0.7),
+        origin,
+    );
+    let mut last = Pose::rest(&rig);
+    run(
+        &mut springs,
+        &rig,
+        600,
+        FRAME,
+        Vec3::ZERO,
+        |_| world,
+        |_, pose, _| last = pose.clone(),
+    );
+    drawn_tails(&rig, &last, world, &chains)
+        .into_iter()
+        .flatten()
+        .map(|tail| tail - origin)
+        .collect()
+}
+
+// Plausible defects: a link's collision radius, or its length, not scaled
+// with the instance, so a doubled character's sheet sits closer to its
+// colliders or spaced differently than the same character's.
+// Oracle: scale invariance, as `a_doubled_instance_doubles_lengths_and_colliders`:
+// with every length doubled, the sphere's included, and the world-unit
+// stiffness and gravity doubled too, each step is the single instance's
+// doubled, so the pressed sheet settles with every tail's offset from the
+// instance twice the single one's, within that test's 1 mm.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_doubled_instance_doubles_a_pressed_sheet() {
+    let (single, doubled) = (pressed(1.), pressed(2.));
+    for (single, doubled) in single.iter().zip(&doubled) {
+        assert!(
+            doubled.abs_diff_eq(*single * 2., 1e-3),
+            "a tail settles {doubled} from the doubled instance, not {}",
+            *single * 2.
+        );
+    }
+}
+
+/// A closed skirt of eight chains round a 0.15 m ring, five bones each,
+/// and a collider on the leg driven from the body's axis at 0.75 m out
+/// between the first two chains by 0.35 m over a second, then held for
+/// one, at `rate` calls a second, under an instance scaled by `scale`
+/// with the chains' world-unit stiffness and gravity scaled alike, so
+/// every scale runs the same motion at its own size. Returns the most the
+/// first two chains' tails at any depth spread past their rest spacing, as
+/// a fraction of it.
+fn wedged(shape: ColliderShape, rate: u32, scale: f32) -> f32 {
+    let (rig, chains) = hanging(&ring(8, 0.15), &[5; 8], Vec3::NEG_Y * BONE);
+    let chains: Vec<Chain> = chains
+        .into_iter()
+        .map(|chain| Chain {
+            stiffness: chain.stiffness * scale,
+            gravity: chain.gravity * scale,
+            ..chain
+        })
+        .collect();
+    let world = Mat4::from_scale(Vec3::splat(scale));
+    let mut springs = SpringBones::new(
+        &rig,
+        &chains,
+        &[Sheet {
+            chains: (0..8).collect(),
+            closed: true,
+        }],
+        &[Collider { node: LEG, shape }],
+    )
+    .unwrap();
+    let rest = drawn_tails(&rig, &Pose::rest(&rig), world, &chains);
+    let between = Quat::from_rotation_y(-22.5f32.to_radians()) * Vec3::X;
+    let mut most = 0f32;
+    kick(
+        &mut springs,
+        &rig,
+        &chains,
+        rate,
+        2.,
+        stride(Vec3::Y * 0.75, Vec3::Y * 0.75 + between * 0.35),
+        |_| world,
+        |_, tails, _, _, _| {
+            for (depth, (a, b)) in tails[0].iter().zip(&tails[1]).enumerate() {
+                let gap = rest[0][depth].distance(rest[1][depth]);
+                most = most.max((a.distance(*b) - gap) / gap);
+            }
+        },
+    );
+    most
+}
+
+// Plausible defects: links that do not collide, or are pushed the wrong
+// way, so a leg wider than the gap between two chains of a skirt wedges
+// them apart and goes between them (measured with link collision
+// disabled: their link stretches 54% to 55% at these rates).
+// Oracle: the skirt's rest geometry. Eight chains round a 0.15 m ring are
+// 0.115 m apart; a sphere 0.07 m in radius, 0.18 m wide with the chains'
+// radius, can pass between two of them only by stretching their link 57%.
+// Driven out from inside the skirt between them, it leaves that link at
+// every depth no more than 10% longer than its length. (Pressed outward,
+// the link is also briefly shortened, by up to 12%; shortening does not let
+// a collider through.)
+#[wasm_bindgen_test(unsupported = test)]
+fn a_sphere_wider_than_the_gap_cannot_part_two_chains() {
+    for rate in [30, 60, 90, 144] {
+        let most = wedged(
+            ColliderShape::Sphere {
+                center: Vec3::ZERO,
+                radius: 0.07,
+            },
+            rate,
+            1.,
+        );
+        assert!(
+            most < 0.1,
+            "{rate} Hz: the two chains' spacing spreads {most} past its length"
+        );
+    }
+}
+
+// Plausible defects: as for the sphere, and the nearest points of a link
+// and the capsule's segment taken wrongly (measured with link collision
+// disabled: the link stretches 55% to 57% at these rates), or by a test
+// that holds at one size only (a fixed threshold for parallel segments
+// takes every short link as parallel to the capsule: 23% at a quarter
+// size).
+// Oracle: as for the sphere. An upright capsule 0.07 m in radius across
+// the skirt's lower rows, a leg, driven out between two chains, leaves
+// their link at every depth no more than 10% longer than its length, for
+// the character at its own size and at a quarter of it.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_capsule_wider_than_the_gap_cannot_part_two_chains() {
+    for (rate, scale) in [(30, 1.), (60, 1.), (90, 1.), (144, 1.), (60, 0.25)] {
+        let most = wedged(
+            ColliderShape::Capsule {
+                head: Vec3::Y * 0.1,
+                tail: Vec3::NEG_Y * 0.1,
+                radius: 0.07,
+            },
+            rate,
+            scale,
+        );
+        assert!(
+            most < 0.1,
+            "{rate} Hz, scale {scale}: the two chains' spacing spreads {most} past its length"
+        );
+    }
 }

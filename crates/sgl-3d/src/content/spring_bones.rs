@@ -45,6 +45,37 @@
 //! collider pass `COLLIDER_ROUNDS` times; the pose written between two
 //! steps goes through the same pass where it is drawn, so what is drawn
 //! stays outside every collider at any call rate.
+//!
+//! Sheets (`Sheet`: a cape, a skirt) tie side-by-side chains together with
+//! links between neighbouring chains' tails at the same depth, each held at
+//! the distance the pose gives it, both ways: position-based dynamics with
+//! the tails as particles of equal mass (Müller et al. 2007, "Position
+//! Based Dynamics", its distance constraint and its collision projection,
+//! eq. 5), as Jolt Physics' edge constraint at zero compliance and its
+//! `SHEET_ITERATIONS` rounds a step
+//! (`SoftBodyMotionProperties::ApplyEdgeConstraints` and
+//! `SoftBodyCreationSettings::mNumIterations` at revision
+//! cb1a6244912555d12b580265ce7540de262eab44, MIT). Written from the paper's
+//! formulas; no Jolt or SPCRJointDynamics code is copied. Each round the
+//! links are put back to their lengths, the links collide, and every chain
+//! in a sheet is put back root to tip through its bones' lengths and the
+//! tail collider pass, so bones never stretch and tails never enter the
+//! body. Two departures (D-100). There are no shear links across the grid's
+//! cells, which Jolt and SPCRJointDynamics add: bones do not stretch, so a
+//! cell with both diagonals fixed is a rigid plate, and a closed sheet of
+//! them cannot move. Bones and links alone are the two thread directions of
+//! a woven cloth, neither stretching, with nothing across the diagonals (a
+//! Chebyshev net; Mack and Taylor 1956, "The fitting of woven cloth to
+//! surfaces"), so the sheet shears and folds as cloth does, and each
+//! chain's stiffness back to its animated direction is what resists shear.
+//! And each link's segment is pushed out of every collider, as
+//! SPCRJointDynamics collides its links (revision
+//! 7ebe63eb48e7737f3c443511ad2dc2caf1bf96b9, MIT), so a collider wider
+//! than the gap between two chains does not wedge them apart and go
+//! between them; one narrower than the gap meets only the links and can
+//! pass through a cell. The nearest points of a link and a
+//! capsule's segment are Godot's `Geometry3D::get_closest_points_between_segments`
+//! (core/math/geometry_3d.cpp, at Godot's revision above), ported.
 use glam::{Mat4, Quat, Vec3};
 
 use super::animation::Pose;
@@ -66,6 +97,11 @@ const MAX_STEPS_PER_CALL: u32 = 8;
 /// a third reaches f32 rounding. The same passes let a tail pushed into one
 /// collider by the next settle against both.
 const COLLIDER_ROUNDS: usize = 3;
+/// How many rounds each step runs over a sheet: its links put back to
+/// their lengths and collided, then its chains' length restore and collider pass. Jolt's
+/// default solver iteration count (`SoftBodyCreationSettings::mNumIterations`),
+/// so a sheet's cost per step is fixed by its content.
+const SHEET_ITERATIONS: usize = 5;
 /// Godot's `CMP_EPSILON`, the tolerance of its `is_zero_approx` and
 /// `is_equal_approx`, which the ported code tests against.
 const CMP_EPSILON: f32 = 0.00001;
@@ -152,6 +188,22 @@ impl Chain {
             ..Self::default()
         }
     }
+}
+
+/// Chains that lie side by side and hold together as one surface: a cape,
+/// cloak or coat (open), or a skirt (closed). Each chain's bone tails are
+/// linked to the next chain's at the same depth, at their distance in the
+/// pose `step` is given, as far down as the shorter of the two chains goes;
+/// the links keep that distance and collide with the colliders. A chain
+/// belongs to at most one sheet.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Sheet {
+    /// Indices into the chains given to `SpringBones::new`, in the order
+    /// they lie side by side (whatever their order there).
+    pub chains: Vec<usize>,
+    /// Whether the last chain is linked to the first, round a body: a
+    /// skirt. Needs three chains or more to add a link.
+    pub closed: bool,
 }
 
 /// A shape on a node of the body that keeps every chain's tails out of it,
@@ -243,23 +295,7 @@ impl ColliderShape {
         tail: Vec3,
         previous: Vec3,
     ) -> Vec3 {
-        let (center, radius) = match self {
-            Self::Sphere { center, radius } => (center, radius),
-            Self::Capsule {
-                head: start,
-                tail: end,
-                radius,
-            } => {
-                let axis = end - start;
-                let length_squared = axis.length_squared();
-                let along = if length_squared > 0. {
-                    (axis.dot(tail - start) / length_squared).clamp(0., 1.)
-                } else {
-                    0.
-                };
-                (start + axis * along, radius)
-            }
-        };
+        let (center, radius) = self.sphere_at(tail);
         let reach = radius + bone_radius;
         if tail.distance(center) >= reach {
             return tail;
@@ -295,6 +331,55 @@ impl ColliderShape {
         head + axis * along + side * across
     }
 
+    /// The sphere that stands for the shape at `point`: a sphere's own, or
+    /// for a capsule the sphere of its radius at its segment's point nearest
+    /// `point`.
+    fn sphere_at(self, point: Vec3) -> (Vec3, f32) {
+        match self {
+            Self::Sphere { center, radius } => (center, radius),
+            Self::Capsule { head, tail, radius } => (
+                head + (tail - head) * nearest_along(head, tail, point),
+                radius,
+            ),
+        }
+    }
+
+    /// A sheet link's segment from `start` to `end`, `radius` thick, against
+    /// the shape: where it enters, the fraction of the way along the
+    /// segment of its point deepest in the shape, and the move that takes
+    /// that point out to the shape's surface grown by `radius`. A capsule
+    /// is the sphere at the point of its segment nearest the link's. `None`
+    /// where the link is clear, or runs through the very centre, which
+    /// gives no way out (the tails' own collider pass still holds them).
+    fn push_segment(self, radius: f32, start: Vec3, end: Vec3) -> Option<(f32, Vec3)> {
+        // A cheap reject: the spheres round the link and round the shape
+        // grown by `radius` do not meet.
+        let (middle, half) = ((start + end) * 0.5, start.distance(end) * 0.5);
+        let (bound_center, bound_radius) = match self {
+            Self::Sphere { center, radius } => (center, radius),
+            Self::Capsule { head, tail, radius } => {
+                ((head + tail) * 0.5, head.distance(tail) * 0.5 + radius)
+            }
+        };
+        if middle.distance_squared(bound_center) >= (half + bound_radius + radius).powi(2) {
+            return None;
+        }
+        let (along, center, shape_radius) = match self {
+            Self::Sphere { center, radius } => (nearest_along(start, end, center), center, radius),
+            Self::Capsule { head, tail, radius } => {
+                let (along, at) = closest_between_segments(start, end, head, tail);
+                (along, head.lerp(tail, at), radius)
+            }
+        };
+        let offset = start.lerp(end, along) - center;
+        let distance = offset.length();
+        let reach = shape_radius + radius;
+        if !(distance > 0. && distance < reach) {
+            return None;
+        }
+        Some((along, offset * ((reach - distance) / distance)))
+    }
+
     fn is_valid(self) -> bool {
         let (points, radius) = match self {
             Self::Sphere { center, radius } => ([center, center], radius),
@@ -312,6 +397,101 @@ fn collide_sphere(origin: Vec3, radius: f32, bone_radius: f32, point: Vec3) -> V
         point
     } else {
         origin + offset.normalize_or_zero() * reach
+    }
+}
+
+/// How far along the segment from `start` to `end` its point nearest
+/// `point` lies, `0..=1`; 0 for a segment of no length.
+fn nearest_along(start: Vec3, end: Vec3, point: Vec3) -> f32 {
+    let axis = end - start;
+    let length_squared = axis.length_squared();
+    if length_squared > 0. {
+        (axis.dot(point - start) / length_squared).clamp(0., 1.)
+    } else {
+        0.
+    }
+}
+
+/// Godot's `Geometry3D::get_closest_points_between_segments`
+/// (core/math/geometry_3d.cpp at revision
+/// 8f2e46bca3c1cca8f3b759a0eaf67e44082b81a4, based, as Godot says, on David
+/// Eberly's computation of the distance between line segments): the
+/// nearest points of the segment from `p0` to `p1` and the segment from
+/// `q0` to `q1`, as the fractions of the way along each. Modified: returns
+/// the fractions, from which Godot computes the points; and takes segments
+/// as parallel by their angle (the squared sine under `CMP_EPSILON`),
+/// where Godot compares the determinant, a length to the fourth power,
+/// with `CMP_EPSILON` itself, which takes every pair of short segments as
+/// parallel whatever their angle: a link and a capsule of a character at a
+/// quarter of its size.
+fn closest_between_segments(p0: Vec3, p1: Vec3, q0: Vec3, q1: Vec3) -> (f32, f32) {
+    let p = p1 - p0;
+    let q = q1 - q0;
+    let r = p0 - q0;
+    let a = p.dot(p);
+    let b = p.dot(q);
+    let c = q.dot(q);
+    let d = p.dot(r);
+    let e = q.dot(r);
+    let det = a * c - b * b;
+    // The fraction along the first segment nearest the second's point at
+    // `numerator / a` clamped: Godot's repeated ternaries.
+    let clamped = |numerator: f32| {
+        if numerator <= 0. {
+            0.
+        } else if numerator >= a {
+            1.
+        } else {
+            numerator / a
+        }
+    };
+    if det > CMP_EPSILON * a * c {
+        // Non-parallel segments.
+        let bte = b * e;
+        let ctd = c * d;
+        if bte <= ctd {
+            // s <= 0
+            if e <= 0. {
+                (clamped(-d), 0.)
+            } else if e < c {
+                (0., e / c)
+            } else {
+                (clamped(b - d), 1.)
+            }
+        } else {
+            let s = bte - ctd;
+            if s >= det {
+                // s >= 1
+                if b + e <= 0. {
+                    (clamped(-d), 0.)
+                } else if b + e < c {
+                    (1., (b + e) / c)
+                } else {
+                    (clamped(b - d), 1.)
+                }
+            } else {
+                // 0 < s < 1
+                let ate = a * e;
+                let btd = b * d;
+                if ate <= btd {
+                    (clamped(-d), 0.)
+                } else {
+                    let t = ate - btd;
+                    if t >= det {
+                        (clamped(b - d), 1.)
+                    } else {
+                        (s / det, t / det)
+                    }
+                }
+            }
+        }
+    } else if e <= 0. {
+        // Parallel segments.
+        (clamped(-d), 0.)
+    } else if e >= c {
+        (clamped(b - d), 1.)
+    } else {
+        (0., e / c)
     }
 }
 
@@ -343,6 +523,15 @@ pub enum SpringBonesError {
     /// Chain `chain`'s `field` is not finite or is negative, or for `drag`
     /// is above 1.
     ChainValue { chain: usize, field: ChainField },
+    /// Sheet `sheet` names chain `chain`, which was not given.
+    SheetChain { sheet: usize, chain: usize },
+    /// Sheets `first` and `second` both name chain `chain`, or one sheet
+    /// names it twice (`first == second`): a chain belongs to one sheet.
+    SharedChain {
+        first: usize,
+        second: usize,
+        chain: usize,
+    },
     /// Collider `collider` names `node`, which the rig lacks.
     ColliderNode { collider: usize, node: usize },
     /// Collider `collider`'s shape has a point that is not finite, or a
@@ -378,6 +567,17 @@ impl std::fmt::Display for SpringBonesError {
                 };
                 write!(f, "chain {chain}'s {name} must be {range}")
             }
+            Self::SheetChain { sheet, chain } => {
+                write!(f, "sheet {sheet} names chain {chain}, which was not given")
+            }
+            Self::SharedChain {
+                first,
+                second,
+                chain,
+            } => write!(
+                f,
+                "sheets {first} and {second} both name chain {chain}; a chain belongs to one sheet"
+            ),
             Self::ColliderNode { collider, node } => {
                 write!(
                     f,
@@ -402,6 +602,8 @@ impl std::error::Error for SpringBonesError {}
 pub struct SpringBones {
     /// Every chain's bones, chain after chain, each chain root first.
     bones: Vec<Bone>,
+    /// Every sheet's links between bone tails.
+    links: Vec<Link>,
     colliders: Vec<Collider>,
     /// Each collider's node's transform in the asset's space this call.
     collider_nodes: Vec<Mat4>,
@@ -440,6 +642,16 @@ struct Bone {
     /// Whether the bone has a length at rest and swings: Godot gives a
     /// joint without one no Verlet state.
     simulated: bool,
+    /// Whether the bone's chain is in a sheet or hangs below one that is,
+    /// so it is put back after the sheets' links each round.
+    restored: bool,
+    /// Where a restored bone's head is found in the sheets' rounds before
+    /// the last.
+    head: Head,
+    /// The bone's head in the world, and its length and radius there, from
+    /// the step's first pass, which the sheets' rounds hold; `None` where
+    /// the rig could not place the bone.
+    reach: Option<Reach>,
     /// The bone's direction in its node's space, a unit vector, and its
     /// length (Godot's `forward_vector` and `length`), from the latest pose.
     forward: Vec3,
@@ -479,6 +691,45 @@ impl Bone {
             self.length = length;
         }
     }
+
+    /// The bone's tail in the asset's space, its node at `global`.
+    fn tail_at(&self, global: Mat4) -> Vec3 {
+        global.transform_point3(self.forward * self.length)
+    }
+}
+
+/// Where a bone's head lies in a sheet's rounds before the last, which
+/// compose no frames: the head moves only as the tails above it do, and
+/// its world length and radius stay the first pass's, since the rounds only
+/// turn bones. The last round composes every frame through the rig.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Head {
+    /// A chain's first bone below no bone a sheet moves: where the first
+    /// pass placed it.
+    Root,
+    /// At the tail of the bone before it in the chain, which swings.
+    Above,
+    /// Composed through the rig every round: a chain's first bone hanging
+    /// from a node of a restored chain, a bone below one that does not
+    /// swing, and every restored bone above those.
+    Composed,
+}
+
+/// A sheet's link between two bones' tails at the same depth, which keeps
+/// them its length apart.
+#[derive(Clone, Copy, Debug)]
+struct Link {
+    /// The two bones, indices into `SpringBones::bones`.
+    bones: [usize; 2],
+    /// The second tail less the first in the asset's space in this call's
+    /// pose, which the step's world takes to the link's length.
+    offset: Vec3,
+    /// The link's length in the world at the step being run.
+    rest: f32,
+    /// How far the link's segment stays from every collider's surface: the
+    /// larger of its two bones' radii in the world, so two chains of
+    /// different radii keep the thicker one's clearance between them.
+    radius: f32,
 }
 
 /// A world matrix as a scale, a rotation and a translation, so that two
@@ -540,13 +791,16 @@ struct Frame {
 }
 
 impl SpringBones {
-    /// Chains and colliders on `rig`, at rest until the first `step`.
-    /// Refuses a node the rig lacks, a chain node that is not its
-    /// predecessor's child, a node two chains name, and a chain value or collider shape that is not
-    /// finite or is out of range, saying which.
+    /// Chains, the sheets that tie them, and colliders on `rig`, at rest
+    /// until the first `step`. Refuses a node the rig lacks, a chain node
+    /// that is not its predecessor's child, a node two chains name, a chain
+    /// a sheet names that was not given or that two sheets (or one twice)
+    /// name, and a chain value or collider shape that is not finite or is
+    /// out of range, saying which.
     pub fn new(
         rig: &Rig,
         chains: &[Chain],
+        sheets: &[Sheet],
         colliders: &[Collider],
     ) -> Result<Self, SpringBonesError> {
         let node_count = rig.nodes.len();
@@ -585,6 +839,26 @@ impl SpringBones {
                 owners[node] = Some(index);
             }
         }
+        // The sheet that names each chain: a chain belongs to one sheet.
+        let mut sheet_of: Vec<Option<usize>> = vec![None; chains.len()];
+        for (index, sheet) in sheets.iter().enumerate() {
+            for &chain in &sheet.chains {
+                if chain >= chains.len() {
+                    return Err(SpringBonesError::SheetChain {
+                        sheet: index,
+                        chain,
+                    });
+                }
+                if let Some(first) = sheet_of[chain] {
+                    return Err(SpringBonesError::SharedChain {
+                        first,
+                        second: index,
+                        chain,
+                    });
+                }
+                sheet_of[chain] = Some(index);
+            }
+        }
         // Solved by the depth of their first node in the rig, the given
         // order otherwise: a chain hanging from another chain's node starts
         // deeper than that chain, so it follows that chain's solved motion
@@ -604,7 +878,30 @@ impl SpringBones {
         let mut order: Vec<usize> = (0..chains.len()).collect();
         order.sort_by_key(|&index| chains[index].nodes.first().map_or(0, |&node| depth(node)));
         let mut bones = Vec::new();
-        for chain in order.iter().map(|&index| &chains[index]) {
+        // Each chain's first bone in `bones`, and whether it is put back
+        // after the sheets' links: it is in a sheet, or hangs from a node
+        // of a chain that is (solved before it, being shallower).
+        let mut starts = vec![0; chains.len()];
+        let mut restored = vec![false; chains.len()];
+        for &index in &order {
+            let chain = &chains[index];
+            starts[index] = bones.len();
+            let hangs = {
+                let mut above = chain.nodes.first().and_then(|&node| rig.nodes[node].parent);
+                let mut steps = 0;
+                let mut follows = false;
+                while let Some(node) = above.filter(|&node| node < node_count && steps < node_count)
+                {
+                    if owners[node].is_some_and(|owner| restored[owner]) {
+                        follows = true;
+                        break;
+                    }
+                    above = rig.nodes[node].parent;
+                    steps += 1;
+                }
+                follows
+            };
+            restored[index] = sheet_of[index].is_some() || hangs;
             for (position, &node) in chain.nodes.iter().enumerate() {
                 let child = chain.nodes.get(position + 1).copied();
                 // Godot's `_init_joints`: a joint whose bone has no length
@@ -622,6 +919,13 @@ impl SpringBones {
                 };
                 let simulated = !is_zero_approx(axis);
                 let animated = rig.nodes[node].rest;
+                let head = if position == 0 {
+                    if hangs { Head::Composed } else { Head::Root }
+                } else if bones.last().is_some_and(|above: &Bone| above.simulated) {
+                    Head::Above
+                } else {
+                    Head::Composed
+                };
                 bones.push(Bone {
                     node,
                     child,
@@ -631,6 +935,9 @@ impl SpringBones {
                     radius: chain.radius,
                     tip: chain.tip,
                     simulated,
+                    restored: restored[index],
+                    head,
+                    reach: None,
                     forward: axis.normalize_or_zero(),
                     length,
                     animated,
@@ -640,6 +947,52 @@ impl SpringBones {
                     turn: Quat::IDENTITY,
                     previous_turn: Quat::IDENTITY,
                 });
+            }
+        }
+        // A composed head needs every restored bone above it composed in
+        // the same round.
+        let mut bone_of: Vec<Option<usize>> = vec![None; node_count];
+        for (index, bone) in bones.iter().enumerate() {
+            bone_of[bone.node] = Some(index);
+        }
+        for index in 0..bones.len() {
+            if !(bones[index].restored && bones[index].head == Head::Composed) {
+                continue;
+            }
+            let mut above = rig.nodes[bones[index].node].parent;
+            let mut steps = 0;
+            while let Some(node) = above.filter(|&node| node < node_count && steps < node_count) {
+                if let Some(bone) = bone_of[node].filter(|&bone| bones[bone].restored) {
+                    bones[bone].head = Head::Composed;
+                }
+                above = rig.nodes[node].parent;
+                steps += 1;
+            }
+        }
+        // Each pair of neighbouring chains' tails at one depth, down to the
+        // shorter chain's last bone, between bones that swing.
+        let mut links = Vec::new();
+        for sheet in sheets {
+            let closing = (sheet.closed && sheet.chains.len() > 2)
+                .then(|| [sheet.chains[sheet.chains.len() - 1], sheet.chains[0]]);
+            let pairs = sheet
+                .chains
+                .windows(2)
+                .map(|pair| [pair[0], pair[1]])
+                .chain(closing);
+            for [a, b] in pairs {
+                let depth = chains[a].nodes.len().min(chains[b].nodes.len());
+                for at in 0..depth {
+                    let bones_ab = [starts[a] + at, starts[b] + at];
+                    if bones_ab.iter().all(|&bone| bones[bone].simulated) {
+                        links.push(Link {
+                            bones: bones_ab,
+                            offset: Vec3::ZERO,
+                            rest: 0.,
+                            radius: 0.,
+                        });
+                    }
+                }
             }
         }
         for (index, collider) in colliders.iter().enumerate() {
@@ -655,6 +1008,7 @@ impl SpringBones {
         }
         Ok(Self {
             bones,
+            links,
             colliders: colliders.to_vec(),
             collider_nodes: vec![Mat4::IDENTITY; colliders.len()],
             placed_colliders: colliders.iter().map(|collider| collider.shape).collect(),
@@ -712,6 +1066,19 @@ impl SpringBones {
             ) {
                 Ok(global) => *matrix = global,
                 Err(_) => return,
+            }
+        }
+        // Each link's length is its tails' distance in this pose, as each
+        // bone's is its own.
+        for link in &mut self.links {
+            let [a, b] = link.bones.map(|bone| &self.bones[bone]);
+            let mut tail = |bone: &Bone| {
+                rig.global(bone.node, &self.locals, &mut self.globals, &mut self.walk)
+                    .map(|global| bone.tail_at(global))
+            };
+            match (tail(a), tail(b)) {
+                (Ok(a), Ok(b)) => link.offset = b - a,
+                _ => return,
             }
         }
         if !self.started {
@@ -790,10 +1157,16 @@ impl SpringBones {
     }
 
     /// One fixed step of every chain under `world` (Godot's
-    /// `_process_joints`), chain after chain, each bone after its parent.
+    /// `_process_joints`), chain after chain, each bone after its parent;
+    /// then `SHEET_ITERATIONS` rounds of the sheets' links put back to
+    /// their lengths and collided, each followed by every chain in a sheet or below one put
+    /// back root to tip. Only the last round composes frames and derives
+    /// turns; the rounds before take each bone's head from the tail above it
+    /// (`Head`) and its length and radius from the first pass.
     fn simulate(&mut self, rig: &Rig, world: &Placement, force: Vec3) {
         let Self {
             bones,
+            links,
             collider_nodes,
             colliders,
             placed_colliders,
@@ -809,43 +1182,86 @@ impl SpringBones {
         }
         globals.fill(None);
         for bone in bones.iter_mut() {
+            bone.reach = None;
             if !bone.simulated {
                 continue;
             }
             let Some(frame) = frame(rig, bone.node, locals, globals, walk) else {
                 continue;
             };
-            let Reach {
-                origin,
-                axis,
-                length,
-                radius,
-            } = Reach::of(bone, world_matrix, frame);
+            let reach = Reach::of(bone, world_matrix, frame);
             // Godot rotates the external force into the centre's space and
             // back; with the world origin as centre it stays in world space.
             let external = (force + Vec3::NEG_Y * bone.gravity) * STEP_SECONDS;
             // Integration of velocity by Verlet. Stiffness, as gravity, is
             // in world units, along the animated direction.
-            let mut next = bone.tail
+            let next = bone.tail
                 + (bone.tail - bone.previous_tail) * (1. - bone.drag)
-                + axis.normalize_or_zero() * (bone.stiffness * STEP_SECONDS)
+                + reach.axis.normalize_or_zero() * (bone.stiffness * STEP_SECONDS)
                 + external;
-            next = limit_length(origin, next, length);
-            next = keep_out(placed_colliders, radius, origin, length, next, bone.tail);
             bone.previous_tail = bone.tail;
-            bone.tail = next;
-            // Convert the tail's position to the node's rotation: the turn,
-            // in the asset's space, from the bone's animated direction there
-            // to the solved one taken back from the world.
-            let from = frame
-                .matrix
-                .transform_vector3(bone.forward)
-                .normalize_or_zero();
-            let to = world.inverse_direction(next - origin).normalize_or_zero();
             bone.previous_turn = bone.turn;
-            bone.turn = from_to_rotation(from, to, bone.turn);
+            settle(bone, next, frame, &reach, world, placed_colliders);
             locals[bone.node] = solved(bone, bone.turn, frame).matrix();
             globals[bone.node] = None;
+            bone.reach = Some(reach);
+        }
+        if links.is_empty() {
+            return;
+        }
+        for link in links.iter_mut() {
+            link.rest = world_matrix.transform_vector3(link.offset).length();
+            let [a, b] = link
+                .bones
+                .map(|bone| bones[bone].reach.map_or(0., |reach| reach.radius));
+            link.radius = a.max(b);
+        }
+        let composed = bones
+            .iter()
+            .any(|bone| bone.restored && bone.head == Head::Composed);
+        for round in 0..SHEET_ITERATIONS {
+            pull(bones, links);
+            collide_links(bones, links, placed_colliders);
+            // The chains the links moved, back onto their bones and out of
+            // the colliders, from the solved pose above them.
+            let last = round + 1 == SHEET_ITERATIONS;
+            let composes = |bone: &Bone| bone.restored && (last || bone.head == Head::Composed);
+            if last || composed {
+                for bone in bones.iter().filter(|bone| composes(bone)) {
+                    locals[bone.node] = bone.animated_matrix;
+                }
+                globals.fill(None);
+            }
+            for index in 0..bones.len() {
+                let bone = &bones[index];
+                if !(bone.restored && bone.simulated) {
+                    continue;
+                }
+                if composes(bone) {
+                    let bone = &mut bones[index];
+                    let Some(frame) = frame(rig, bone.node, locals, globals, walk) else {
+                        continue;
+                    };
+                    let reach = Reach::of(bone, world_matrix, frame);
+                    settle(bone, bone.tail, frame, &reach, world, placed_colliders);
+                    locals[bone.node] = solved(bone, bone.turn, frame).matrix();
+                    globals[bone.node] = None;
+                } else if let Some(reach) = bone.reach {
+                    let origin = match bone.head {
+                        Head::Above => bones[index - 1].tail,
+                        _ => reach.origin,
+                    };
+                    let tail = onto_bone(
+                        placed_colliders,
+                        reach.radius,
+                        origin,
+                        reach.length,
+                        bone.tail,
+                        bone.previous_tail,
+                    );
+                    bones[index].tail = tail;
+                }
+            }
         }
     }
 
@@ -918,6 +1334,7 @@ impl SpringBones {
 /// in the node's space and scale with it (D-100), where Godot keeps them
 /// unscaled: the bone is its animated axis taken into the world, and its
 /// radius scales by the node's uniform scale.
+#[derive(Clone, Copy, Debug)]
 struct Reach {
     origin: Vec3,
     /// The bone's animated axis in the world.
@@ -939,11 +1356,99 @@ impl Reach {
     }
 }
 
+/// The bone's tail taken from `tail` onto its length from its head and
+/// through the collider pass, and its turn derived from where the tail
+/// lands: the turn, in the asset's space, from the bone's animated
+/// direction there to the solved one taken back from the world.
+fn settle(
+    bone: &mut Bone,
+    tail: Vec3,
+    frame: Frame,
+    reach: &Reach,
+    world: &Placement,
+    colliders: &[ColliderShape],
+) {
+    let tail = onto_bone(
+        colliders,
+        reach.radius,
+        reach.origin,
+        reach.length,
+        tail,
+        bone.previous_tail,
+    );
+    bone.tail = tail;
+    let from = frame
+        .matrix
+        .transform_vector3(bone.forward)
+        .normalize_or_zero();
+    let to = world
+        .inverse_direction(tail - reach.origin)
+        .normalize_or_zero();
+    bone.turn = from_to_rotation(from, to, bone.turn);
+}
+
+/// One pass of the sheets' links over the bones' tails, in order: each pair
+/// of tails moved along the line between them, half each, to the link's
+/// length, whether they are further apart or closer (the position-based
+/// distance constraint for two equal masses, Jolt's
+/// `ApplyEdgeConstraints` at zero compliance: rigid).
+fn pull(bones: &mut [Bone], links: &[Link]) {
+    for link in links {
+        let [a, b] = link.bones;
+        let delta = bones[b].tail - bones[a].tail;
+        let length = delta.length();
+        if !length.is_normal() {
+            continue;
+        }
+        let correction = delta * ((length - link.rest) / (2. * length));
+        bones[a].tail += correction;
+        bones[b].tail -= correction;
+    }
+}
+
+/// One pass of the sheets' links against the colliders: where a link's
+/// segment enters a collider grown by the link's radius, its two tails
+/// move along the way out so that the segment's deepest point lands on
+/// the surface. With that point the fraction `t` along the link and `push`
+/// the move it needs, the position-based projection of the point for two
+/// equal masses (Müller et al. 2007, eq. 5) moves the first tail by
+/// `push (1 − t) / ((1 − t)² + t²)` and the second by `push t / ((1 − t)² + t²)`,
+/// which moves the point by exactly `push`.
+fn collide_links(bones: &mut [Bone], links: &[Link], colliders: &[ColliderShape]) {
+    for link in links {
+        let [a, b] = link.bones;
+        for collider in colliders {
+            let Some((along, push)) =
+                collider.push_segment(link.radius, bones[a].tail, bones[b].tail)
+            else {
+                continue;
+            };
+            let weight = (1. - along) * (1. - along) + along * along;
+            bones[a].tail += push * ((1. - along) / weight);
+            bones[b].tail += push * (along / weight);
+        }
+    }
+}
+
 /// Each collider placed in the world through `world` and its node.
 fn place(placed: &mut [ColliderShape], colliders: &[Collider], nodes: &[Mat4], world: Mat4) {
     for ((placed, collider), node) in placed.iter_mut().zip(colliders).zip(nodes) {
         *placed = collider.shape.placed(world * *node);
     }
+}
+
+/// `tail` taken onto the bone `length` from `origin`, then through the
+/// collider pass.
+fn onto_bone(
+    colliders: &[ColliderShape],
+    radius: f32,
+    origin: Vec3,
+    length: f32,
+    tail: Vec3,
+    previous: Vec3,
+) -> Vec3 {
+    let tail = limit_length(origin, tail, length);
+    keep_out(colliders, radius, origin, length, tail, previous)
 }
 
 /// The collider pass over a tail `length` from `origin`, `radius` thick:

@@ -342,7 +342,20 @@ radius) are in their node's space and scale into the world with it and the
 instance, as bone lengths do, where Godot keeps them unscaled (D-100). It
 is presentation: it holds no authority, a server does not run it, and the
 renderer sees only the pose. Substeps, iterations and caps are the module's
-constants.
+constants. Chains that lie side by side can be tied into a sheet (`Sheet`),
+open for a cape or closed for a skirt: SGL links each tail to its
+neighbours' at the same depth, at the distance the pose gives them, and
+each fixed step runs a fixed number of rounds in which the links are put
+back to their lengths, their segments are pushed out of the colliders, and
+the chains are put back on their bones and out of the colliders (D-100).
+Bones and links are the two thread directions of a woven cloth, neither
+stretching, with nothing across the diagonals, so a sheet shears and folds.
+A sheet is the same solver and still writes only rotations. It has no
+self-collision, its rows keep their length (a flared skirt keeps its
+flare), a collider narrower than the gap between two chains can pass
+between them, and a sheet pushed far enough by a collider slides back off
+it, since each bone hangs from the one above and nothing below pulls it
+taut.
 
 An instance also carries shader data, four `f32` its materials' shaders
 read (`Scene::set_instance_shader_data`, zero when it is added): a wind

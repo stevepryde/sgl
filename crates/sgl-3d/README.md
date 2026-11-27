@@ -2774,10 +2774,41 @@ pose reaches the frame through skinning as any pose does.
   collider acts on every chain. Size them from
   the body bones' positions: a sphere at the head, capsules along the torso
   and the upper arms and legs.
-- **Refusals.** `SpringBones::new(&rig, &chains, &colliders)` refuses a
-  node the rig lacks, a chain node that is not the child of the one before
-  it, a node two chains name, and a non-finite or negative value (a `drag` above 1), naming the
-  chain or collider (`SpringBonesError`). `step` leaves the pose as given
+- **Sheets.** `Sheet { chains, closed }` ties chains that lie side by side
+  into one surface: a cape or coat (open) or a skirt (`closed`, the last
+  chain linked to the first; three chains or more). `chains` are indices
+  into the chains given to `new`, in the order they lie side by side,
+  whatever their order there. SGL links each tail to its neighbours' at
+  the same depth, down to the shorter chain's last bone, at the distance
+  the pose `step` is given puts them (scaling with the instance), and
+  keeps that distance both ways. There is nothing across a cell's
+  diagonals, so a sheet shears and folds as woven cloth does, and each
+  chain's `stiffness` and `gravity` are all that stop it shearing flat when
+  every chain swings far one way. Rows keep their length: a flared skirt
+  keeps the flare its pose gives it and does not gather; what is to gather
+  must be separate chains or a narrower sheet. The links collide with the
+  colliders as segments, `radius` (the larger of two chains') from every
+  collider's surface, so a collider wider than the gap between two chains
+  does not wedge them apart. A chain belongs to at most one sheet. What an
+  asset needs: the chains side by side in order, the garment skinned
+  across them; chains spaced closer than the narrowest collider they must
+  stop is wide (its width grown by the chains' radius) and bones shorter
+  than that too; and the straight line between neighbouring chains' bones
+  clear of every collider by the chains' radius in the animated pose, as
+  the bones are (round a body part with N chains that line's middle is at
+  cos(π/N) of the chains' distance from its axis), since a link that starts
+  inside a collider is pushed out and strains the sheet. Limits: a
+  collider narrower than the gap between two chains can pass between
+  them, since the cloth between links does not collide; one moving more
+  than its width in a step can pass anything; a sheet pushed far enough by
+  a collider slides back off it, since each bone hangs from the one above
+  and nothing below pulls it taut; no self-collision.
+- **Refusals.** `SpringBones::new(&rig, &chains, &sheets, &colliders)`
+  refuses a node the rig lacks, a chain node that is not the child of the
+  one before it, a node two chains name, a non-finite or negative value (a
+  `drag` above 1), a chain a sheet names that was not given, and a chain
+  two sheets (or one sheet twice) name, naming the chain, sheet or
+  collider (`SpringBonesError`). `step` leaves the pose as given
   for a non-finite `world` or `force` and resets; a non-finite or
   non-positive `dt` runs no step and still writes the pose.
 - **What an asset needs.** Bones along each loose part (a ponytail's
@@ -2797,9 +2828,10 @@ pose reaches the frame through skinning as any pose does.
   step can pass it. Not provided: rotation-axis locks, angle limits,
   per-bone settings, plane colliders and per-vertex cloth.
 
-The `spring_bones` example generates a body with a head, a torso and a
-ponytail, walks, stops and turns it, and renders the swing; its test checks
-that no hair tail enters the head's or the torso's collider:
+The `spring_bones` example generates a body with a head, a torso, a
+ponytail and a cape of six chains as one open sheet, walks, stops and turns
+it, and renders the swing; its tests check that no hair or cape tail enters
+the head's or the torso's collider:
 
 ```sh
 cargo run -p sgl-3d-examples --example spring_bones -- target/spring_bones.png

@@ -162,8 +162,11 @@ them through unrefracted. A probe captured on an
   nodes (`Chain`: tip length, stiffness, drag, gravity, radius) and sphere
   and capsule colliders on body nodes, and steps them once a frame with the
   sampled pose, the instance's world matrix, a wind force and its `dt`.
-  Godot's VRM spring bone at a fixed 1/60 s, so the motion does not depend
-  on the frame rate; CPU only, writing nothing but the chains' rotations.
+  Chains side by side tie into a cape or skirt (`Sheet`, open or closed):
+  links at each depth keep the pose's spacing and collide with the
+  colliders. Godot's VRM spring bone at a fixed 1/60 s, so the motion does
+  not depend on the frame rate; CPU only, writing nothing but the chains'
+  rotations.
   [Spring bones](../README.md#spring-bones).
 - **Scene**: starts empty; the game adds, replaces and removes materials,
   models, instances, lights, decals and environments between frames (`add_…`,
@@ -698,7 +701,7 @@ size, and record counts must fit `u32`.
 An animation player, mixer or state machine: `animation::Pose` samples and
 blends clips at the times and weights the game gives it, and holds no clock.
 Per-vertex cloth: loose clothing moves through bones with `spring_bones`
-(D-100).
+(D-100). The cloth between a sheet's links does not collide.
 DLSS and MetalFX upscaling are [not planned](../../../specs/sgl3d.md#planned).
 The directional cascades cull by frustum alone.
 
