@@ -40,13 +40,20 @@ pub enum Button {
     Mode,
 }
 
-/// Stick axes range from -1 to 1. Positive Y always points up.
+/// Controller axes.
+///
+/// Stick axes (`LeftStickX`, `LeftStickY`, `RightStickX`, `RightStickY`) range
+/// from `-1.0..=1.0` with positive Y always pointing up. Trigger axes
+/// (`LeftTrigger`, `RightTrigger`) range from `0.0..=1.0`, where `0.0` is
+/// released and `1.0` is fully pressed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Axis {
     LeftStickX,
     LeftStickY,
     RightStickX,
     RightStickY,
+    LeftTrigger,
+    RightTrigger,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -87,6 +94,17 @@ impl Gamepad {
 pub(crate) enum Update {
     Connected(GamepadId, String),
     Input(Event),
+}
+
+/// Clamp analog trigger readings to `0.0..=1.0`, replacing non-finite values
+/// with `0.0` (released).
+pub(crate) fn sanitize_trigger(value: f32) -> f32 {
+    if value.is_finite() {
+        let clamped = value.clamp(0.0, 1.0);
+        if clamped == 0.0 { 0.0 } else { clamped }
+    } else {
+        0.0
+    }
 }
 
 #[derive(Default)]
@@ -266,5 +284,88 @@ mod tests {
             ]
         );
         assert!(!state.pads[&id].is_pressed(Button::South));
+    }
+
+    #[test]
+    fn trigger_axes_default_to_zero_update_and_clear_on_disconnect() {
+        let mut state = State::default();
+        let id = GamepadId(0);
+        state.apply(Update::Connected(id, "pad".into()));
+        assert_eq!(
+            state.pads[&id].value(Axis::LeftTrigger).to_bits(),
+            0.0_f32.to_bits()
+        );
+        assert_eq!(
+            state.pads[&id].value(Axis::RightTrigger).to_bits(),
+            0.0_f32.to_bits()
+        );
+
+        let events: Vec<_> = [
+            EventType::AxisChanged(Axis::LeftTrigger, 0.25),
+            EventType::AxisChanged(Axis::RightTrigger, 0.75),
+            EventType::ButtonPressed(Button::LeftTrigger2),
+            EventType::AxisChanged(Axis::LeftTrigger, 1.0),
+        ]
+        .into_iter()
+        .filter_map(|event| state.apply(Update::Input(Event { id, event })))
+        .map(|event| event.event)
+        .collect();
+        assert_eq!(
+            events,
+            [
+                EventType::AxisChanged(Axis::LeftTrigger, 0.25),
+                EventType::AxisChanged(Axis::RightTrigger, 0.75),
+                EventType::ButtonPressed(Button::LeftTrigger2),
+                EventType::AxisChanged(Axis::LeftTrigger, 1.0),
+            ]
+        );
+        assert_eq!(
+            state.pads[&id].value(Axis::LeftTrigger).to_bits(),
+            1.0_f32.to_bits()
+        );
+        assert_eq!(
+            state.pads[&id].value(Axis::RightTrigger).to_bits(),
+            0.75_f32.to_bits()
+        );
+        assert!(state.pads[&id].is_pressed(Button::LeftTrigger2));
+        assert!(!state.pads[&id].is_pressed(Button::RightTrigger2));
+
+        state.apply(Update::Input(Event {
+            id,
+            event: EventType::Disconnected,
+        }));
+        assert!(state.pads.is_empty());
+        assert!(
+            state
+                .apply(Update::Input(Event {
+                    id,
+                    event: EventType::AxisChanged(Axis::LeftTrigger, 0.5),
+                }))
+                .is_none()
+        );
+
+        let new_id = GamepadId(1);
+        state.apply(Update::Connected(new_id, "pad".into()));
+        assert_eq!(
+            state.pads[&new_id].value(Axis::LeftTrigger).to_bits(),
+            0.0_f32.to_bits()
+        );
+        assert_eq!(
+            state.pads[&new_id].value(Axis::RightTrigger).to_bits(),
+            0.0_f32.to_bits()
+        );
+    }
+
+    #[test]
+    fn sanitize_trigger_clamps_and_replaces_non_finite() {
+        assert_eq!(sanitize_trigger(0.0).to_bits(), 0.0_f32.to_bits());
+        assert_eq!(sanitize_trigger(0.42).to_bits(), 0.42_f32.to_bits());
+        assert_eq!(sanitize_trigger(1.0).to_bits(), 1.0_f32.to_bits());
+        assert_eq!(sanitize_trigger(-0.25).to_bits(), 0.0_f32.to_bits());
+        assert_eq!(sanitize_trigger(1.5).to_bits(), 1.0_f32.to_bits());
+
+        for value in [-0.0_f32, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert_eq!(sanitize_trigger(value).to_bits(), 0.0_f32.to_bits());
+        }
     }
 }

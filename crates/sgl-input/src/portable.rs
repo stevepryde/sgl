@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::{Axis, Button, Event, EventType, GamepadId, Update};
+use crate::{Axis, Button, Event, EventType, GamepadId, Update, sanitize_trigger};
 
 /// Gilrs buttons SGL reports, and their SGL names.
 const BUTTONS: [(gilrs::Button, Button); 17] = [
@@ -29,6 +29,21 @@ const AXES: [(gilrs::Axis, Axis); 4] = [
     (gilrs::Axis::LeftStickY, Axis::LeftStickY),
     (gilrs::Axis::RightStickX, Axis::RightStickX),
     (gilrs::Axis::RightStickY, Axis::RightStickY),
+];
+
+/// Gilrs analog trigger buttons mapped to SGL trigger axes.
+///
+/// In `gilrs 0.11`, all platforms (Linux SDL/evdev mappings, Windows `XInput` and
+/// WGI, and `wasm32` Web Gamepad API) normalize lower-trigger travel into
+/// `EventType::ButtonChanged(Button::LeftTrigger2 | RightTrigger2, 0.0..=1.0, _)`,
+/// while also emitting `ButtonPressed`/`ButtonReleased` across the threshold
+/// (and `1.0`/`0.0` `ButtonChanged` for digital triggers). `Axis::LeftZ` and
+/// `Axis::RightZ` are non-SDL axes unused on Windows and Web and can conflict
+/// with trigger button events on Linux, so analog triggers are read solely from
+/// `ButtonChanged`.
+const TRIGGER_AXES: [(gilrs::Button, Axis); 2] = [
+    (gilrs::Button::LeftTrigger2, Axis::LeftTrigger),
+    (gilrs::Button::RightTrigger2, Axis::RightTrigger),
 ];
 
 pub(crate) struct Backend {
@@ -79,6 +94,12 @@ impl Backend {
                     };
                     EventType::ButtonReleased(button)
                 }
+                gilrs::EventType::ButtonChanged(button, value, _) => {
+                    let Some(event) = map_trigger_change(button, value) else {
+                        continue;
+                    };
+                    event
+                }
                 gilrs::EventType::AxisChanged(axis, value, _) => {
                     let Some(&(_, axis)) = AXES.iter().find(|(gilrs, _)| *gilrs == axis) else {
                         continue;
@@ -118,6 +139,13 @@ fn map_button(button: gilrs::Button) -> Option<Button> {
         .map(|&(_, button)| button)
 }
 
+fn map_trigger_change(button: gilrs::Button, value: f32) -> Option<EventType> {
+    TRIGGER_AXES
+        .iter()
+        .find(|(gilrs, _)| *gilrs == button)
+        .map(|&(_, axis)| EventType::AxisChanged(axis, sanitize_trigger(value)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,5 +175,36 @@ mod tests {
         state.apply(on_disconnected(&mut connected, id));
         assert!(apply(&mut state, on_connected(&mut connected, id, "pad".into())).is_some());
         assert!(!state.pads[&id].is_pressed(Button::South));
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn trigger_button_changes_map_to_sanitized_trigger_axes() {
+        assert_eq!(
+            map_trigger_change(gilrs::Button::LeftTrigger2, 0.35),
+            Some(EventType::AxisChanged(Axis::LeftTrigger, 0.35))
+        );
+        assert_eq!(
+            map_trigger_change(gilrs::Button::RightTrigger2, 1.4),
+            Some(EventType::AxisChanged(Axis::RightTrigger, 1.0))
+        );
+        assert_eq!(
+            map_trigger_change(gilrs::Button::LeftTrigger2, -0.5),
+            Some(EventType::AxisChanged(Axis::LeftTrigger, 0.0))
+        );
+        assert_eq!(
+            map_trigger_change(gilrs::Button::RightTrigger2, f32::NAN),
+            Some(EventType::AxisChanged(Axis::RightTrigger, 0.0))
+        );
+        assert_eq!(map_trigger_change(gilrs::Button::LeftTrigger, 1.0), None);
+        assert_eq!(map_trigger_change(gilrs::Button::RightTrigger, 1.0), None);
+        assert_eq!(map_trigger_change(gilrs::Button::South, 1.0), None);
+        assert_eq!(
+            map_button(gilrs::Button::LeftTrigger2),
+            Some(Button::LeftTrigger2)
+        );
+        assert_eq!(
+            map_button(gilrs::Button::RightTrigger2),
+            Some(Button::RightTrigger2)
+        );
     }
 }

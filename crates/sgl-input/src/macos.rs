@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::ptr::NonNull;
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use crate::{Axis, Button, Event, EventType, GamepadId, Update};
+use crate::{Axis, Button, Event, EventType, GamepadId, Update, sanitize_trigger};
 use block2::RcBlock;
 use objc2::{MainThreadMarker, rc::Retained, runtime::Bool};
 use objc2_game_controller::{
@@ -23,6 +23,7 @@ struct Pad {
     controller: Retained<GCController>,
     buttons: Vec<(Retained<GCControllerButtonInput>, ButtonHandler)>,
     axes: Vec<(Retained<GCControllerAxisInput>, AxisHandler)>,
+    triggers: Vec<(Retained<GCControllerButtonInput>, ButtonHandler)>,
 }
 impl Pad {
     fn new(
@@ -34,8 +35,10 @@ impl Pad {
         // SAFETY: Called only by the main-thread Backend with a retained profile.
         // These accessors return retained, typed elements. Optional controls are
         // omitted rather than inventing buttons for devices that lack them.
-        let (buttons, axes) = unsafe {
+        let (buttons, axes, triggers) = unsafe {
             let dpad = profile.dpad();
+            let left_trigger = profile.leftTrigger();
+            let right_trigger = profile.rightTrigger();
             let mut buttons = vec![
                 (Button::South, profile.buttonA()),
                 (Button::East, profile.buttonB()),
@@ -47,8 +50,8 @@ impl Pad {
                 (Button::DPadRight, dpad.right()),
                 (Button::LeftTrigger, profile.leftShoulder()),
                 (Button::RightTrigger, profile.rightShoulder()),
-                (Button::LeftTrigger2, profile.leftTrigger()),
-                (Button::RightTrigger2, profile.rightTrigger()),
+                (Button::LeftTrigger2, left_trigger.clone()),
+                (Button::RightTrigger2, right_trigger.clone()),
                 (Button::Start, profile.buttonMenu()),
             ];
             for (button, input) in [
@@ -71,63 +74,119 @@ impl Pad {
                     (Axis::RightStickX, right.xAxis()),
                     (Axis::RightStickY, right.yAxis()),
                 ],
+                vec![
+                    (Axis::LeftTrigger, left_trigger),
+                    (Axis::RightTrigger, right_trigger),
+                ],
             )
         };
-        let mut button_handlers = Vec::with_capacity(buttons.len());
-        for (button, input) in buttons {
-            let events = sender.clone();
-            let handler: ButtonHandler = RcBlock::new(
-                move |_: NonNull<GCControllerButtonInput>, _: f32, pressed: Bool| {
-                    let event = if pressed.as_bool() {
-                        EventType::ButtonPressed(button)
-                    } else {
-                        EventType::ButtonReleased(button)
-                    };
-                    let _ = events.send(Update::Input(Event { id, event }));
-                },
-            );
-            // SAFETY: The setter copies the block. Captures are owned and valid
-            // until the framework drops the copy; its pointer is never dereferenced.
-            unsafe {
-                input.setPressedChangedHandler(RcBlock::as_ptr(&handler));
-            }
-            // Seed held input at connection; subsequent changes arrive in order.
-            if unsafe { input.isPressed() } {
-                let _ = sender.send(Update::Input(Event {
-                    id,
-                    event: EventType::ButtonPressed(button),
-                }));
-            }
-            button_handlers.push((input, handler));
-        }
-        let mut axis_handlers = Vec::with_capacity(axes.len());
-        for (axis, input) in axes {
-            let events = sender.clone();
-            let handler: AxisHandler =
-                RcBlock::new(move |_: NonNull<GCControllerAxisInput>, value: f32| {
-                    let _ = events.send(Update::Input(Event {
-                        id,
-                        event: EventType::AxisChanged(axis, value),
-                    }));
-                });
-            // SAFETY: Same copied-block ownership as buttons. Apple's stick Y
-            // already points up, matching the public API; do not invert it.
-            unsafe {
-                input.setValueChangedHandler(RcBlock::as_ptr(&handler));
-                let _ = sender.send(Update::Input(Event {
-                    id,
-                    event: EventType::AxisChanged(axis, input.value()),
-                }));
-            }
-            axis_handlers.push((input, handler));
-        }
         Self {
             controller,
-            buttons: button_handlers,
-            axes: axis_handlers,
+            buttons: install_button_handlers(buttons, id, sender),
+            axes: install_axis_handlers(axes, id, sender),
+            triggers: install_trigger_handlers(triggers, id, sender),
         }
     }
 }
+
+fn install_button_handlers(
+    buttons: Vec<(Button, Retained<GCControllerButtonInput>)>,
+    id: GamepadId,
+    sender: &Sender<Update>,
+) -> Vec<(Retained<GCControllerButtonInput>, ButtonHandler)> {
+    let mut handlers = Vec::with_capacity(buttons.len());
+    for (button, input) in buttons {
+        let events = sender.clone();
+        let handler: ButtonHandler = RcBlock::new(
+            move |_: NonNull<GCControllerButtonInput>, _: f32, pressed: Bool| {
+                let event = if pressed.as_bool() {
+                    EventType::ButtonPressed(button)
+                } else {
+                    EventType::ButtonReleased(button)
+                };
+                let _ = events.send(Update::Input(Event { id, event }));
+            },
+        );
+        // SAFETY: The setter copies the block. Captures are owned and valid
+        // until the framework drops the copy; its pointer is never dereferenced.
+        unsafe {
+            input.setPressedChangedHandler(RcBlock::as_ptr(&handler));
+        }
+        // Seed held input at connection; subsequent changes arrive in order.
+        if unsafe { input.isPressed() } {
+            let _ = sender.send(Update::Input(Event {
+                id,
+                event: EventType::ButtonPressed(button),
+            }));
+        }
+        handlers.push((input, handler));
+    }
+    handlers
+}
+
+fn install_axis_handlers(
+    axes: Vec<(Axis, Retained<GCControllerAxisInput>)>,
+    id: GamepadId,
+    sender: &Sender<Update>,
+) -> Vec<(Retained<GCControllerAxisInput>, AxisHandler)> {
+    let mut handlers = Vec::with_capacity(axes.len());
+    for (axis, input) in axes {
+        let events = sender.clone();
+        let handler: AxisHandler =
+            RcBlock::new(move |_: NonNull<GCControllerAxisInput>, value: f32| {
+                let _ = events.send(Update::Input(Event {
+                    id,
+                    event: EventType::AxisChanged(axis, value),
+                }));
+            });
+        // SAFETY: Same copied-block ownership as buttons. Apple's stick Y
+        // already points up, matching the public API; do not invert it.
+        unsafe {
+            input.setValueChangedHandler(RcBlock::as_ptr(&handler));
+            let _ = sender.send(Update::Input(Event {
+                id,
+                event: EventType::AxisChanged(axis, input.value()),
+            }));
+        }
+        handlers.push((input, handler));
+    }
+    handlers
+}
+
+fn install_trigger_handlers(
+    triggers: Vec<(Axis, Retained<GCControllerButtonInput>)>,
+    id: GamepadId,
+    sender: &Sender<Update>,
+) -> Vec<(Retained<GCControllerButtonInput>, ButtonHandler)> {
+    let mut handlers = Vec::with_capacity(triggers.len());
+    for (axis, input) in triggers {
+        let events = sender.clone();
+        let handler: ButtonHandler = RcBlock::new(
+            move |_: NonNull<GCControllerButtonInput>, value: f32, _: Bool| {
+                let _ = events.send(Update::Input(Event {
+                    id,
+                    event: EventType::AxisChanged(axis, sanitize_trigger(value)),
+                }));
+            },
+        );
+        // SAFETY: Same copied-block ownership as buttons. `valueChangedHandler`
+        // is independent of `pressedChangedHandler` on `GCControllerButtonInput`,
+        // so analog travel and digital `LeftTrigger2`/`RightTrigger2` coexist.
+        let initial = unsafe {
+            input.setValueChangedHandler(RcBlock::as_ptr(&handler));
+            sanitize_trigger(input.value())
+        };
+        if initial != 0.0 {
+            let _ = sender.send(Update::Input(Event {
+                id,
+                event: EventType::AxisChanged(axis, initial),
+            }));
+        }
+        handlers.push((input, handler));
+    }
+    handlers
+}
+
 impl Drop for Pad {
     fn drop(&mut self) {
         // SAFETY: Backend is main-thread-bound and retains each element. Clear
@@ -142,6 +201,11 @@ impl Drop for Pad {
                 }
             }
             for (input, handler) in &self.axes {
+                if std::ptr::eq(input.valueChangedHandler(), RcBlock::as_ptr(handler)) {
+                    input.setValueChangedHandler(std::ptr::null_mut());
+                }
+            }
+            for (input, handler) in &self.triggers {
                 if std::ptr::eq(input.valueChangedHandler(), RcBlock::as_ptr(handler)) {
                     input.setValueChangedHandler(std::ptr::null_mut());
                 }

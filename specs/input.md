@@ -12,14 +12,18 @@ This boundary was requested while fixing Detonator Squad's macOS controller path
    while unfocused and restore process-local monitoring preferences when the
    last live owner drops, so an owner replaced in place keeps them.
 2. **Input.** It must expose face buttons by position, D-pad, shoulders, lower
-   triggers as digital buttons, stick clicks, menu/options/home when available,
-   and both sticks. Stick axes must use -1..1 with positive Y up. A press and
+   triggers as both digital buttons (`Button::LeftTrigger2`/`Button::RightTrigger2`)
+   and analog axes (`Axis::LeftTrigger`/`Axis::RightTrigger`), stick clicks,
+   menu/options/home when available, and both sticks. Stick axes must use
+   `-1.0..=1.0` with positive Y up; trigger axes must use `0.0..=1.0` (`0.0`
+   released, `1.0` fully pressed). A press and
    release between polls must remain two ordered events even when held state
    ends released. Absent optional controls must not generate invented input.
 3. **Lifecycle.** It must discover controllers already connected and hot-plugged
    after initialization, each with one `Connected` (a repeated report is
-   ignored). On macOS the buttons already held and the sticks' positions
-   follow it; on Gilrs targets input already held at connection is not
+   ignored). On macOS the buttons already held, the sticks' positions, and
+   non-zero trigger values follow it; on Gilrs targets input already held at
+   connection is not
    reported until it changes (gilrs starts a pad's state empty), and a
    release with no reported press is dropped. A press of a button already
    held is dropped on every target. Input that happened before a

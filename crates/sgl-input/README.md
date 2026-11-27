@@ -19,13 +19,16 @@ for event in pads.poll() {
 # Ok::<(), String>(())
 ```
 
-South/East/West/North are face-button positions. Stick values range from -1 to 1
-with positive Y pointing up. `LeftTrigger`/`RightTrigger` are shoulder buttons;
-`LeftTrigger2`/`RightTrigger2` are the lower triggers treated as buttons. Press and
+South/East/West/North are face-button positions. Stick values range from `-1.0..=1.0`
+with positive Y pointing up. `Axis::LeftTrigger` and `Axis::RightTrigger` report
+analog lower-trigger travel in `0.0..=1.0` (`0.0` released, `1.0` fully pressed).
+`Button::LeftTrigger`/`Button::RightTrigger` are shoulder buttons;
+`Button::LeftTrigger2`/`Button::RightTrigger2` are the lower triggers treated as
+digital buttons. Press and
 release events preserve taps between polls; `gamepad(id)` exposes the latest
 state and returns `None` after disconnection. On Windows, Linux and the web
 (Gilrs), a button held when a pad connects is not reported, and a deflected
-stick reads 0 until it changes. IDs are local to this owner and must be discarded on disconnection; backends
+stick or held trigger reads 0 until it changes. IDs are local to this owner and must be discarded on disconnection; backends
 may reuse them for later connections. They are not saved player identities. macOS supports extended-gamepad profiles
 and omits optional buttons a device does not provide.
 
