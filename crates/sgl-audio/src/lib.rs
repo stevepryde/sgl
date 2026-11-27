@@ -4,13 +4,16 @@
 //!   distance attenuation and constant-power stereo panning on every target
 //!   (including `wasm32` and headless builds with `--no-default-features`).
 //! - [`AudioEngine`] manages cached audio clips, tracked looping/one-shot
-//!   emitters, and live stereo-panned playback using lock-free atomic gain
-//!   updates with zero `unsafe` code.
+//!   emitters, and live stereo-panned playback on native targets (`rodio` with
+//!   lock-free atomic gain updates) and browsers (`wasm32` Web Audio API),
+//!   with zero `unsafe` code.
 
 mod engine;
 #[cfg(all(feature = "playback", not(target_arch = "wasm32")))]
 mod source;
 mod spatial;
+#[cfg(all(feature = "playback", target_arch = "wasm32"))]
+mod web;
 
 pub use engine::{AudioEngine, AudioError, EmitterState};
 #[cfg(all(feature = "playback", not(target_arch = "wasm32")))]
@@ -205,9 +208,11 @@ mod tests {
 
         // Pause silences computed mix and restores on resume
         engine.set_paused(true);
+        engine.resume();
         engine.update();
         assert_eq!(engine.emitter_mix(1).unwrap(), SpatialMix::SILENT);
         engine.set_paused(false);
+        engine.resume();
         engine.update();
         assert_close(engine.emitter_mix(1).unwrap().gain, 0.5, 1e-6);
 

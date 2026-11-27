@@ -2713,7 +2713,11 @@ name = "sgl-audio"
 version = "0.13.0"
 dependencies = [
  "glam",
+ "js-sys",
  "rodio",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

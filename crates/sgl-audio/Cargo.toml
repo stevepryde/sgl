@@ -19,7 +19,13 @@ workspace = true
 
 [features]
 default = ["playback"]
-playback = ["dep:rodio"]
+playback = [
+    "dep:rodio",
+    "dep:js-sys",
+    "dep:wasm-bindgen",
+    "dep:wasm-bindgen-futures",
+    "dep:web-sys",
+]
 
 [dependencies]
 glam.workspace = true
@@ -30,4 +36,23 @@ rodio = { workspace = true, optional = true, features = [
     "symphonia-mp3",
     "symphonia-wav",
     "symphonia-pcm",
+] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = { workspace = true, optional = true }
+wasm-bindgen = { workspace = true, optional = true }
+wasm-bindgen-futures = { workspace = true, optional = true }
+web-sys = { workspace = true, optional = true, features = [
+    "AudioBuffer",
+    "AudioBufferSourceNode",
+    "AudioContext",
+    "AudioContextState",
+    "AudioDestinationNode",
+    "AudioNode",
+    "AudioParam",
+    "AudioScheduledSourceNode",
+    "BaseAudioContext",
+    "Event",
+    "GainNode",
+    "StereoPannerNode",
 ] }
