@@ -10,7 +10,7 @@ other SGL crates (it first ships in 0.10.0):
 
 ```toml
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-sgl-webgpu = "0.13.0"
+sgl-webgpu = "0.14.0"
 ```
 
 and create the wgpu instance with it where a native build calls

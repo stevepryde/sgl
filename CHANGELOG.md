@@ -15,6 +15,14 @@ docs and specs the entry links.
 
 ## Unreleased
 
+## 0.14.0 — 2026-11-27
+
+Move every SGL crate to `0.14.0` together and commit the updated `Cargo.lock`.
+Game code must change only where a game matches `sgl_input::Axis` exhaustively
+(add `Axis::LeftTrigger` and `Axis::RightTrigger`). Everything else is an
+addition; browser games calling `sgl_audio::AudioEngine::open()` with default
+`playback` now play live spatialized Web Audio instead of running headless.
+
 - `sgl-audio` adds browser (`wasm32`) Web Audio playback (`AudioEngine::open` now opens a `web_sys::AudioContext` under default `playback`, returning `AudioError::DeviceOpen` when unavailable; `AudioEngine::resume` unlocks a suspended browser context when unpaused; same-tick `load_clip` + `play_oneshot`/`sync_emitter` queue until `decode_audio_data` completes; [guide](crates/sgl-audio/README.md)). No game-code changes are needed; browser games calling `AudioEngine::open()` now play live spatialized audio instead of running headless (call `resume()` inside a user-gesture handler if immediate autoplay unlock is needed).
 - `sgl-input` `Axis` gains `LeftTrigger` and `RightTrigger` (`0.0..=1.0`, `0.0` released to `1.0` fully pressed, on macOS via `GCControllerButtonInput` and on Linux/Windows/Web via `gilrs`), alongside the existing digital `Button::LeftTrigger2` / `RightTrigger2` ([guide](crates/sgl-input/README.md)). Exhaustive matches on `sgl_input::Axis` add `Axis::LeftTrigger` and `Axis::RightTrigger` arms; no other game-code changes are needed.
 - `sgl-2d` adds `Camera::rotation: f32` (clockwise radians under default y-down pixels, counter-clockwise under `WorldUnits::y_up`, default `0.0` bit-identical across `view_proj`, `world_to_screen`, and `screen_to_world`) and `TextRenderer::draw_rotated` (rotates glyph layout around a caller-chosen pivot; [guide](crates/sgl-2d/README.md)). No game-code changes are needed.
