@@ -35,8 +35,9 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    source's top row lands at the larger world y), the 9-slice border stays in
    source pixels, and the default units are bit-identical to the pixel
    layout. Expansions are bounded by `MAX_TILED_QUADS`.
-3. **Camera.** `Camera` is a world-space center plus zoom over a logical view;
-   the default convention is y-down logical pixels and clockwise rotation.
+3. **Camera.** `Camera` is a world-space center, zoom, and `rotation` over a
+   logical view; the default convention is y-down logical pixels and clockwise
+   rotation (`rotation == 0.0` is bit-identical to the unrotated path).
    `with_units` switches the world channel to pixels-per-unit and optional
    y-up; the pixel convention is bit-identical to a camera without units.
    `screen_to_world` and `world_to_screen` are inverses through the letterbox.
@@ -62,7 +63,9 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    finite draws nothing and measures zero.
    Outline and shadow are offset copies of the glyph quads, at most
    `MAX_RING_WIDTH` wide; a non-finite width draws no ring. `pixel_scale = 1`
-   is bit-identical to unscaled rendering.
+   is bit-identical to unscaled rendering. `draw_rotated` rotates a text line
+   (and its outline/shadow offsets) about a pivot; `0.0` delegates to `draw`
+   and a non-finite rotation draws nothing.
 6. **Overlay.** Lines, rect outlines, fills, and circles are emitted as quads
    on the shared white texture into whichever channel the caller passes, with
    the overlay's color, `z`, and clip. Positions, sizes and widths are in the

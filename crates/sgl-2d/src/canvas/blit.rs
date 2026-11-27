@@ -1929,4 +1929,172 @@ mod gpu_tests {
             assert!((f32::from(*c) - 64.0).abs() <= 1.0, "{px:?}");
         }
     }
+
+    /// An off-center world rect rendered through a `+π/2` rotated camera lands
+    /// at its exact rotated screen pixel position and not its unrotated one.
+    #[test]
+    fn rotated_camera_places_world_rect_at_rotated_screen_position() {
+        let Some(gpu) = gpu() else { return };
+        let mut renderer = Renderer::headless(&gpu, 64, 64, [0.0; 3], LightingSpace::Gamma);
+        let mut assets: Assets<Texture> = Assets::new();
+        let white = renderer.white_texture(&gpu, &mut assets);
+        let mut camera = Camera::new(64, 64);
+        camera.rotation = std::f32::consts::FRAC_PI_2;
+
+        // Centered at (32, 48) — 16 px below camera center (32, 32). Under a
+        // +90 deg CW camera rotation, world +y maps to screen +x, so the 8×8
+        // rect lands centered at (48, 32): columns 44..52, rows 28..36.
+        let mut list = DrawList::new();
+        Overlay {
+            color: [1.0, 0.0, 0.0, 1.0],
+            ..Overlay::new(white)
+        }
+        .fill_rect(&mut list.world, Rect::new(28.0, 44.0, 8.0, 8.0));
+
+        renderer.render_scene(&gpu, &mut list, &camera, &LightFrame::default());
+        let pixels = renderer.read_scene(&gpu).expect("scene readback");
+        let px = |x: usize, y: usize| {
+            let i = (y * 64 + x) * 4;
+            [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
+        };
+        assert_eq!(px(48, 32), [255, 0, 0, 255], "rotated position must be red");
+        assert_eq!(
+            px(32, 48),
+            [0, 0, 0, 255],
+            "unrotated position must stay black"
+        );
+        for y in 0..64 {
+            for x in 0..64 {
+                let inside = (44..52).contains(&x) && (28..36).contains(&y);
+                let expected = if inside {
+                    [255, 0, 0, 255]
+                } else {
+                    [0, 0, 0, 255]
+                };
+                assert_eq!(px(x, y), expected, "pixel ({x}, {y})");
+            }
+        }
+    }
+
+    /// Normal-mapped 2D lighting is invariant under camera rotation because
+    /// both `normal_axes` and `light.wgsl`'s light vector live in the unrotated
+    /// world-aligned y-down frame.
+    #[test]
+    fn rotated_camera_preserves_normal_mapped_lighting() {
+        let Some(gpu) = gpu() else { return };
+        // Odd target size (65×65) so pixel (32, 32) has its fragment center at
+        // exact camera center (32.5, 32.5) and samples the same world point at
+        // every rotation angle.
+        let mut renderer = Renderer::headless(&gpu, 65, 65, [0.0; 3], LightingSpace::Gamma);
+        let mut assets: Assets<Texture> = Assets::new();
+
+        let diffuse = assets.insert(PathBuf::from("diff.png"), flat(8, [255, 255, 255, 255]));
+        // Normal tilted toward +X (right, toward the light at x = 48.5).
+        let n_right = assets.insert(PathBuf::from("n_right.png"), flat(8, [255, 128, 255, 255]));
+        // Normal tilted toward -X (left, away from the light).
+        let n_left = assets.insert(PathBuf::from("n_left.png"), flat(8, [0, 128, 255, 255]));
+
+        renderer
+            .upload_texture(&gpu, diffuse, assets.get(diffuse).unwrap())
+            .unwrap();
+        renderer
+            .upload_normal_map(&gpu, diffuse, n_right, assets.get(n_right).unwrap())
+            .unwrap();
+
+        let lighting = LightFrame {
+            canvas_modulate: [0.0, 0.0, 0.0, 1.0],
+            lights: vec![PointLight {
+                height: 16.0,
+                ..PointLight::analytic(Vec2::new(48.5, 32.5), 64.0, 0.0)
+            }],
+            occluders: Vec::new(),
+        };
+
+        let sample_center = |renderer: &mut Renderer, normal: Handle<Texture>, rot: f32| {
+            let mut camera = Camera::new(65, 65);
+            camera.rotation = rot;
+            let mut list = DrawList::new();
+            list.push(SpriteInstance {
+                normal: Some(normal),
+                ..SpriteInstance::new(diffuse, Vec2::new(32.5, 32.5))
+            });
+            renderer.render_scene(&gpu, &mut list, &camera, &lighting);
+            let pixels = renderer.read_scene(&gpu).expect("scene readback");
+            let i = (32 * 65 + 32) * 4;
+            pixels[i]
+        };
+
+        let unrotated = sample_center(&mut renderer, n_right, 0.0);
+        let rotated = sample_center(&mut renderer, n_right, std::f32::consts::FRAC_PI_2);
+        assert!(
+            unrotated > 150,
+            "expected bright lit center, got {unrotated}"
+        );
+        assert!(
+            rotated.abs_diff(unrotated) <= 1,
+            "lighting changed under camera rotation: {unrotated} vs {rotated}"
+        );
+
+        renderer
+            .upload_normal_map(&gpu, diffuse, n_left, assets.get(n_left).unwrap())
+            .unwrap();
+        let away = sample_center(&mut renderer, n_left, std::f32::consts::FRAC_PI_2);
+        assert!(
+            away < rotated / 2,
+            "away-facing normal should be much dimmer: away={away}, toward={rotated}"
+        );
+    }
+
+    /// Rotated text (`+π/2`) renders ink along the rotated vertical axis around
+    /// the pivot and leaves the unrotated horizontal strip empty.
+    #[test]
+    fn rotated_text_renders_along_rotated_axis() {
+        use crate::canvas::text::{TextChannel, TextRenderer, TextStyle};
+
+        let Some(gpu) = gpu() else { return };
+        let mut renderer = Renderer::headless(&gpu, 128, 128, [0.0; 3], LightingSpace::Gamma);
+        let mut assets: Assets<Texture> = Assets::new();
+        let mut text = TextRenderer::new(include_bytes!(
+            "../../tests/fixtures/IBMPlexSans-Regular.ttf"
+        ))
+        .expect("test font should parse");
+        let camera = Camera::new(128, 128);
+        let style = TextStyle::new(24.0, [1.0; 4]);
+        let pivot = Vec2::new(64.0, 20.0);
+
+        let mut list = DrawList::new();
+        text.draw_rotated(
+            "HHHH",
+            pivot,
+            pivot,
+            std::f32::consts::FRAC_PI_2,
+            &style,
+            0.0,
+            TextChannel::Screen,
+        );
+        for page in text.end_frame(&mut assets, &mut list) {
+            renderer
+                .upload_texture(&gpu, page, assets.get(page).unwrap())
+                .unwrap();
+        }
+        renderer.render_scene(&gpu, &mut list, &camera, &LightFrame::default());
+        let pixels = renderer.read_scene(&gpu).expect("scene readback");
+
+        let has_ink = |xs: std::ops::Range<usize>, mut ys: std::ops::Range<usize>| {
+            ys.any(|y| {
+                xs.clone().any(|x| {
+                    let i = (y * 128 + x) * 4;
+                    pixels[i] > 128
+                })
+            })
+        };
+        assert!(
+            has_ink(30..64, 60..110),
+            "expected rotated text ink along the vertical axis below pivot"
+        );
+        assert!(
+            !has_ink(70..128, 15..55),
+            "unrotated horizontal region should have no ink"
+        );
+    }
 }

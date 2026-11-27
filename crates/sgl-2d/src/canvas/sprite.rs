@@ -1291,15 +1291,18 @@ fn to_raw(inst: &SpriteInstance, entry: &Entry, page_size: Vec2, units: WorldUni
 
 /// Where a sprite's normal map's +X (its image's right) and +Y (its image's
 /// up, toward its top row) point in the normal target, whose space is the
-/// screen's, y down, in world units: unit vectors, xy and zw. They are the
-/// quad's texture-right and texture-up axes as `affine` (from
-/// [`sprite_affine`]) places them, a negative scale's mirror included,
-/// reversed where the sprite is flipped, with world y turned screen-down by
-/// `units`, as the light pass turns its light vectors. Godot b130438 turns a
-/// `CanvasItem`'s normal so (`servers/rendering/renderer_rd/shaders/
+/// unrotated world-aligned y-down frame in world units: unit vectors, xy and
+/// zw. They are the quad's texture-right and texture-up axes as `affine`
+/// (from [`sprite_affine`]) places them, a negative scale's mirror included,
+/// reversed where the sprite is flipped, with world y turned y-down by
+/// `units`, matching how `light.wgsl` builds its light vector (`lv`). Because
+/// both the stored normal and `light.wgsl`'s light vector stay in this
+/// unrotated world-aligned y-down frame, `dot(N, L)` is invariant under
+/// [`Camera::rotation`](crate::canvas::camera::Camera::rotation) and no
+/// camera rotation needs to be applied to either vector. Godot b130438 turns
+/// a `CanvasItem`'s normal similarly (`servers/rendering/renderer_rd/shaders/
 /// canvas.glsl` 653–661, 708–712: x and y reversed by a flipped source
-/// rect's sign, then the item's normalized world axes). The camera does
-/// not rotate, so nothing more turns them.
+/// rect's sign, then the item's normalized world axes).
 fn normal_axes(affine: Affine2, flip_x: bool, flip_y: bool, units: WorldUnits) -> [f32; 4] {
     let screen = |axis: Vec2| Vec2::new(axis.x, axis.y * units.screen_y_sign()).normalize_or_zero();
     let flipped = |flip: bool| if flip { -1.0 } else { 1.0 };

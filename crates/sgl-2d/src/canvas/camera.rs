@@ -2,7 +2,7 @@
 //!
 //! The default convention matches the Godot original: **y-down** world in
 //! logical pixels (960×540 view at `zoom = 1`), positive rotation clockwise.
-//! The camera is a world-space center + zoom; UI/HUD uses the fixed
+//! The camera is a world-space center + zoom + rotation; UI/HUD uses the fixed
 //! [`screen_view_proj`](Camera::screen_view_proj) (an identity camera over
 //! the logical space).
 //!
@@ -55,7 +55,8 @@ impl WorldUnits {
 }
 
 /// A world-space camera: `center` is the world point at the middle of the
-/// view; `zoom > 1` magnifies (shows fewer world pixels/units).
+/// view; `zoom > 1` magnifies (shows fewer world pixels/units); `rotation`
+/// turns the view in radians.
 #[derive(Debug, Clone, Copy)]
 pub struct Camera {
     /// World point at the view center, in the camera's units (logical
@@ -64,6 +65,12 @@ pub struct Camera {
     /// Magnification; `1.0` maps one world pixel (`pixels_per_unit` pixels
     /// per world unit) to one logical pixel.
     pub zoom: f32,
+    /// Rotation in radians, matching
+    /// [`SpriteInstance::rot`](crate::canvas::draw::SpriteInstance::rot):
+    /// positive is clockwise on screen under the default y-down pixel
+    /// convention, and counter-clockwise in world space when
+    /// [`WorldUnits::y_up`] is `true`.
+    pub rotation: f32,
     /// The logical view size in pixels (PR-1: 960×540).
     logical: Vec2,
     /// The world-channel convention (pixels, y-down by default).
@@ -83,6 +90,7 @@ impl Camera {
         Self {
             center: logical * 0.5,
             zoom: 1.0,
+            rotation: 0.0,
             logical,
             units: WorldUnits::default(),
         }
@@ -122,21 +130,34 @@ impl Camera {
 
     /// View-projection matrix mapping world coordinates → wgpu clip space.
     /// World `center` lands at NDC origin; the view spans
-    /// `logical / zoom / pixels_per_unit` world units. Built by hand (a 2D
-    /// ortho is four constants): x maps left→-1, right→+1; y **flips** under
-    /// the pixel convention (screen top = smaller world y → clip +1) and
+    /// `logical / zoom / pixels_per_unit` world units and is rotated by
+    /// `rotation`. Built by hand: x maps left→-1, right→+1; y **flips** under
+    /// the pixel convention (screen top = smaller local y → clip +1) and
     /// maps straight when `y_up`; z is the constant 0.5 mid-depth (no
     /// depth buffer — painter's order comes from the z-sorted `DrawList`).
+    /// When `rotation == 0.0`, the unrotated arithmetic is used verbatim so
+    /// the default path stays bit-identical.
     pub fn view_proj(&self) -> Mat4 {
         let half = self.logical * 0.5 / self.zoom / self.units.pixels_per_unit;
         let sx = 1.0 / half.x;
         // y-down world → y-up clip (`-1 / half`); y-up world → `+1 / half`.
         let sy = -self.units.screen_y_sign() / half.y;
+        if self.rotation == 0.0 {
+            return Mat4::from_cols(
+                glam::Vec4::new(sx, 0.0, 0.0, 0.0),
+                glam::Vec4::new(0.0, sy, 0.0, 0.0),
+                glam::Vec4::new(0.0, 0.0, 1.0, 0.0),
+                glam::Vec4::new(-self.center.x * sx, -self.center.y * sy, 0.5, 1.0),
+            );
+        }
+        let (s, c) = self.rotation.sin_cos();
+        let cx = self.center.x;
+        let cy = self.center.y;
         Mat4::from_cols(
-            glam::Vec4::new(sx, 0.0, 0.0, 0.0),
-            glam::Vec4::new(0.0, sy, 0.0, 0.0),
+            glam::Vec4::new(sx * c, -sy * s, 0.0, 0.0),
+            glam::Vec4::new(sx * s, sy * c, 0.0, 0.0),
             glam::Vec4::new(0.0, 0.0, 1.0, 0.0),
-            glam::Vec4::new(-self.center.x * sx, -self.center.y * sy, 0.5, 1.0),
+            glam::Vec4::new(-sx * (c * cx + s * cy), -sy * (-s * cx + c * cy), 0.5, 1.0),
         )
     }
 
@@ -164,12 +185,16 @@ impl Camera {
             (cursor_px.x - lb.x) / (lb.width / self.logical.x),
             (cursor_px.y - lb.y) / (lb.height / self.logical.y),
         );
-        // Logical px → world: recenter on the view middle, un-zoom, apply
-        // the units (y flips only when `y_up`), recenter on the camera.
+        // Logical px → camera-local world: recenter on the view middle,
+        // un-zoom, apply the units (y flips only when `y_up`).
         let offset = (logical - self.logical * 0.5) / self.zoom;
-        self.center
-            + Vec2::new(offset.x, offset.y * self.units.screen_y_sign())
-                / self.units.pixels_per_unit
+        let local =
+            Vec2::new(offset.x, offset.y * self.units.screen_y_sign()) / self.units.pixels_per_unit;
+        if self.rotation == 0.0 {
+            return self.center + local;
+        }
+        let (s, c) = self.rotation.sin_cos();
+        self.center + Vec2::new(c * local.x - s * local.y, s * local.x + c * local.y)
     }
 
     /// Map a world point (the camera's units) to **logical view pixels**
@@ -177,7 +202,14 @@ impl Camera {
     /// map overlays use to draw over the scene. The inverse of
     /// [`screen_to_world`](Self::screen_to_world) up to the letterbox.
     pub fn world_to_screen(&self, world: Vec2) -> Vec2 {
-        let offset = (world - self.center) * (self.zoom * self.units.pixels_per_unit);
+        let local = if self.rotation == 0.0 {
+            world - self.center
+        } else {
+            let d = world - self.center;
+            let (s, c) = self.rotation.sin_cos();
+            Vec2::new(c * d.x + s * d.y, -s * d.x + c * d.y)
+        };
+        let offset = local * (self.zoom * self.units.pixels_per_unit);
         Vec2::new(offset.x, offset.y * self.units.screen_y_sign()) + self.logical * 0.5
     }
 }
@@ -424,5 +456,171 @@ mod tests {
             pixels_per_unit: f32::INFINITY,
             y_up: true,
         });
+    }
+
+    /// `rotation == 0.0` takes the exact unrotated path (bit-identical to the
+    /// pre-rotation formulas, including `screen_view_proj`).
+    #[wasm_bindgen_test(unsupported = test)]
+    fn rotation_zero_is_bit_identical() {
+        for units in [WorldUnits::default(), units32()] {
+            let mut cam = Camera::new(W, H).with_units(units);
+            cam.center = Vec2::new(123.25, -45.75);
+            cam.zoom = 1.5;
+            assert_eq!(cam.rotation, 0.0);
+
+            let half = cam.view_size() * 0.5 / cam.zoom / units.pixels_per_unit;
+            let sx = 1.0 / half.x;
+            let sy = -units.screen_y_sign() / half.y;
+            let expected = Mat4::from_cols(
+                Vec4::new(sx, 0.0, 0.0, 0.0),
+                Vec4::new(0.0, sy, 0.0, 0.0),
+                Vec4::new(0.0, 0.0, 1.0, 0.0),
+                Vec4::new(-cam.center.x * sx, -cam.center.y * sy, 0.5, 1.0),
+            );
+            assert_eq!(
+                cam.view_proj().to_cols_array().map(f32::to_bits),
+                expected.to_cols_array().map(f32::to_bits),
+            );
+
+            let world = Vec2::new(131.5, -39.25);
+            let offset = (world - cam.center) * (cam.zoom * units.pixels_per_unit);
+            let expected_screen =
+                Vec2::new(offset.x, offset.y * units.screen_y_sign()) + cam.view_size() * 0.5;
+            let got_screen = cam.world_to_screen(world);
+            assert_eq!(got_screen.x.to_bits(), expected_screen.x.to_bits());
+            assert_eq!(got_screen.y.to_bits(), expected_screen.y.to_bits());
+
+            let lb = fit_fractional(1600, 1600, W, H);
+            let cursor = Vec2::new(412.5, 687.25);
+            let logical = Vec2::new(
+                (cursor.x - lb.x) / (lb.width / cam.view_size().x),
+                (cursor.y - lb.y) / (lb.height / cam.view_size().y),
+            );
+            let unzoomed = (logical - cam.view_size() * 0.5) / cam.zoom;
+            let expected_world = cam.center
+                + Vec2::new(unzoomed.x, unzoomed.y * units.screen_y_sign()) / units.pixels_per_unit;
+            let got_world = cam.screen_to_world(cursor, &lb);
+            assert_eq!(got_world.x.to_bits(), expected_world.x.to_bits());
+            assert_eq!(got_world.y.to_bits(), expected_world.y.to_bits());
+        }
+    }
+
+    /// Rotated `view_proj` matches hand-computed clip coordinates across
+    /// angles and both y-down / y-up conventions, and a sprite rotated by
+    /// `cam.rotation` appears upright on screen.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn rotated_view_proj_matches_hand_computed_clip_coords() {
+        use crate::canvas::sprite::sprite_affine;
+        use std::f32::consts::{FRAC_PI_2, PI};
+
+        for units in [WorldUnits::default(), units32()] {
+            for angle in [-FRAC_PI_2, FRAC_PI_2, 0.6, PI] {
+                let mut cam = Camera::new(W, H).with_units(units);
+                cam.center = Vec2::new(10.0, -6.0);
+                cam.zoom = 2.0;
+                cam.rotation = angle;
+
+                let vp = cam.view_proj();
+                let half = cam.view_size() * 0.5 / cam.zoom / units.pixels_per_unit;
+                let sx = 1.0 / half.x;
+                let sy = -units.screen_y_sign() / half.y;
+                let (s, c) = angle.sin_cos();
+
+                // Center always lands at NDC origin.
+                let center_clip = vp * Vec4::new(cam.center.x, cam.center.y, 0.0, 1.0);
+                assert!(center_clip.x.abs() < 1e-5, "{center_clip:?}");
+                assert!(center_clip.y.abs() < 1e-5, "{center_clip:?}");
+                assert!((center_clip.z - 0.5).abs() < 1e-6);
+                assert!((center_clip.w - 1.0).abs() < 1e-6);
+
+                for delta in [
+                    Vec2::new(0.0, 10.0),
+                    Vec2::new(10.0, 0.0),
+                    Vec2::new(-3.5, 4.25),
+                ] {
+                    let world = cam.center + delta;
+                    let clip = vp * Vec4::new(world.x, world.y, 0.0, 1.0);
+                    let expected_x = sx * (c * delta.x + s * delta.y);
+                    let expected_y = sy * (-s * delta.x + c * delta.y);
+                    assert!(
+                        (clip.x - expected_x).abs() < 1e-4 && (clip.y - expected_y).abs() < 1e-4,
+                        "units={units:?} angle={angle} delta={delta:?}: got {clip:?}, expected ({expected_x}, {expected_y})"
+                    );
+                }
+
+                // Sign check at +π/2: center + (0, 10) appears to the RIGHT of
+                // screen center in both y-down and y-up; center + (10, 0) is UP
+                // under y-down and DOWN under y-up.
+                if (angle - FRAC_PI_2).abs() < 1e-6 {
+                    let p_y = vp * Vec4::new(cam.center.x, cam.center.y + 10.0, 0.0, 1.0);
+                    assert!(p_y.x > 0.0 && p_y.y.abs() < 1e-5, "{p_y:?}");
+                    let p_x = vp * Vec4::new(cam.center.x + 10.0, cam.center.y, 0.0, 1.0);
+                    assert!(p_x.x.abs() < 1e-5, "{p_x:?}");
+                    if units.y_up {
+                        assert!(p_x.y < 0.0, "expected down on screen for y-up: {p_x:?}");
+                    } else {
+                        assert!(p_x.y > 0.0, "expected up on screen for y-down: {p_x:?}");
+                    }
+                }
+
+                // A sprite rotated by `cam.rotation` appears upright on screen:
+                // texture-right points along +clip.x, texture-down along -clip.y.
+                let a = sprite_affine(cam.center, angle, Vec2::new(32.0, 16.0), units);
+                let c0 = vp * Vec4::new(a.translation.x, a.translation.y, 0.0, 1.0);
+                let cr = vp
+                    * Vec4::new(
+                        a.translation.x + a.matrix2.x_axis.x,
+                        a.translation.y + a.matrix2.x_axis.y,
+                        0.0,
+                        1.0,
+                    );
+                let cd = vp
+                    * Vec4::new(
+                        a.translation.x + a.matrix2.y_axis.x,
+                        a.translation.y + a.matrix2.y_axis.y,
+                        0.0,
+                        1.0,
+                    );
+                let dr = cr - c0;
+                let dd = cd - c0;
+                assert!(dr.x > 0.0 && dr.y.abs() < 1e-5, "right axis {dr:?}");
+                assert!(dd.x.abs() < 1e-5 && dd.y < 0.0, "down axis {dd:?}");
+            }
+        }
+    }
+
+    /// `world_to_screen`, `screen_to_world`, and `view_proj` agree and round-trip
+    /// through a letterboxed window across rotation angles and world-unit modes.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn rotated_world_to_screen_and_screen_to_world_roundtrip() {
+        use std::f32::consts::{FRAC_PI_2, PI};
+
+        let lb = fit_fractional(1600, 1600, W, H);
+        assert!(lb.y > 0.0, "expected horizontal bars");
+
+        for units in [WorldUnits::default(), units32()] {
+            for angle in [-FRAC_PI_2, FRAC_PI_2, 0.6, PI] {
+                let mut cam = Camera::new(W, H).with_units(units);
+                cam.center = Vec2::new(12.5, -7.25);
+                cam.zoom = 1.75;
+                cam.rotation = angle;
+
+                for world in [
+                    cam.center,
+                    cam.center + Vec2::new(5.0, 0.0),
+                    cam.center + Vec2::new(0.0, 5.0),
+                    cam.center + Vec2::new(-4.5, 3.25),
+                    cam.center + Vec2::new(7.0, -6.0),
+                ] {
+                    let logical = cam.world_to_screen(world);
+                    let px = Vec2::new(
+                        lb.x + logical.x * (lb.width / W as f32),
+                        lb.y + logical.y * (lb.height / H as f32),
+                    );
+                    assert_close(world_to_window(world, &cam, &lb), px);
+                    assert_close(cam.screen_to_world(px, &lb), world);
+                }
+            }
+        }
     }
 }

@@ -8,7 +8,9 @@ canvas, event loop, simulation, input translation, and UI layout.
 ## Rendering
 
 [`canvas`](src/canvas.rs) renders a logical-resolution scene with world and
-screen draw channels, text, lighting, overlays, and letterbox presentation.
+screen draw channels, camera translation/zoom/`Camera::rotation`, text
+(including `TextRenderer::draw_rotated`), lighting, overlays, and letterbox
+presentation.
 Start with the [direct game](../../examples/direct-game/src/main.rs), which
 owns winit and draws sprites: `cargo run -p sgl-direct-game`. It also builds
 for `wasm32-unknown-unknown`, but the repository has no page that runs it. The [tool UI example](../../examples/sgl-2d/examples/tool_ui.rs)

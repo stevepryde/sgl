@@ -5,7 +5,8 @@
 //! [`SpriteInstance`] quads on either [`DrawList`] channel.
 //!
 //! Flow per frame:
-//! 1. [`TextRenderer::draw`] / [`draw_in_rect`](TextRenderer::draw_in_rect)
+//! 1. [`TextRenderer::draw`] / [`draw_rotated`](TextRenderer::draw_rotated) /
+//!    [`draw_in_rect`](TextRenderer::draw_in_rect)
 //!    lay out a line, rasterizing any glyph not yet in a page, and queue
 //!    positioned quads (shadow → outline → fill push order; z ties resolve
 //!    by push order, PR-2).
@@ -266,6 +267,8 @@ struct Quad {
     src: Rect,
     /// Quad center in logical pixels (`SpriteInstance` convention).
     center: Vec2,
+    /// Rotation about the quad center, radians (`SpriteInstance::rot`).
+    rot: f32,
     /// Instance scale: `1 / pixel_scale` at queue time, so a glyph
     /// rasterized at `s ×` draws at layout size (`1.0` on the game path —
     /// bit-identical to the pre-scale default).
@@ -459,13 +462,14 @@ impl TextRenderer {
         let screen = channel == TextChannel::Screen;
         let clip = self.clip;
         let queued = &mut self.queued;
-        let mut emit = |offset: Vec2, color: [f32; 4]| {
+        emit_styled(style, |offset, color| {
             for (b, pos) in &placed {
                 let size = Vec2::new(b.w as f32, b.h as f32) / s;
                 queued.push(Quad {
                     page: b.page,
                     src: Rect::new(b.x as f32, b.y as f32, b.w as f32, b.h as f32),
                     center: *pos + offset + size * 0.5,
+                    rot: 0.0,
                     scale: 1.0 / s,
                     color,
                     z,
@@ -473,20 +477,86 @@ impl TextRenderer {
                     clip,
                 });
             }
-        };
+        });
+    }
 
-        if let Some(shadow) = style.shadow {
-            for o in ring_offsets(shadow.spread) {
-                emit(shadow.offset + o, shadow.color);
-            }
-            emit(shadow.offset, shadow.color);
+    /// Queue one line of text whose unrotated top-left is `top_left`, rotated
+    /// by `rotation` radians about `pivot` (matching [`SpriteInstance::rot`]:
+    /// clockwise in y-down space). When `rotation == 0.0`, delegates to
+    /// [`draw`](Self::draw) so the snapped axis-aligned layout stays
+    /// bit-identical. At non-zero angles glyphs are laid out without grid
+    /// snapping so spacing stays uniform, and shadow/outline offsets rotate
+    /// with the line. A non-finite `rotation` or non-positive/non-finite size
+    /// draws nothing.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_rotated(
+        &mut self,
+        text: &str,
+        top_left: Vec2,
+        pivot: Vec2,
+        rotation: f32,
+        style: &TextStyle,
+        z: f32,
+        channel: TextChannel,
+    ) {
+        if !rotation.is_finite() {
+            return;
         }
-        if let Some(outline) = style.outline {
-            for o in ring_offsets(outline.width) {
-                emit(o, outline.color);
-            }
+        if rotation == 0.0 {
+            self.draw(text, top_left, style, z, channel);
+            return;
         }
-        emit(Vec2::ZERO, style.color);
+        let s = self.pixel_scale;
+        let raster_px = style.px * s;
+        if !drawable_px(raster_px) {
+            return;
+        }
+        let baseline = top_left.y + self.ascent(raster_px) / s;
+        let mut placed: Vec<(GlyphBitmap, Vec2)> = Vec::new();
+        let mut pen = top_left.x;
+        let mut prev: Option<char> = None;
+        for c in text.chars() {
+            if let Some(p) = prev
+                && let Some(kern) = self.font.horizontal_kern(p, c, raster_px)
+            {
+                pen += kern / s;
+            }
+            let slot = self.glyph(c, raster_px);
+            if let Some(b) = slot.bitmap {
+                // In use this frame: never recycled before its quads flush.
+                self.pages[b.page].last_used = self.frame;
+                // Unsnapped in text-local space so inter-glyph spacing stays
+                // uniform at arbitrary rotation angles.
+                let gx = pen + b.xmin / s;
+                let gy = baseline - b.ymin / s - b.h as f32 / s;
+                placed.push((b, Vec2::new(gx, gy)));
+            }
+            pen += slot.advance / s;
+            prev = Some(c);
+        }
+
+        let rot = Vec2::from_angle(rotation);
+        let screen = channel == TextChannel::Screen;
+        let clip = self.clip;
+        let queued = &mut self.queued;
+        emit_styled(style, |offset, color| {
+            for (b, pos) in &placed {
+                let size = Vec2::new(b.w as f32, b.h as f32) / s;
+                let local_center = *pos + offset + size * 0.5;
+                let center = pivot + rot.rotate(local_center - pivot);
+                queued.push(Quad {
+                    page: b.page,
+                    src: Rect::new(b.x as f32, b.y as f32, b.w as f32, b.h as f32),
+                    center,
+                    rot: rotation,
+                    scale: 1.0 / s,
+                    color,
+                    z,
+                    screen,
+                    clip,
+                });
+            }
+        });
     }
 
     /// Queue one line aligned inside `rect` — how Godot labels position text
@@ -561,6 +631,7 @@ impl TextRenderer {
             };
             let instance = SpriteInstance {
                 src: Some(quad.src),
+                rot: quad.rot,
                 scale: Vec2::splat(quad.scale),
                 color: quad.color,
                 z: quad.z,
@@ -713,6 +784,22 @@ fn ring_offsets(width: f32) -> Vec<Vec2> {
         r -= 2.0;
     }
     out
+}
+
+/// Run a text style's emission passes in shadow → outline → fill order.
+fn emit_styled(style: &TextStyle, mut emit: impl FnMut(Vec2, [f32; 4])) {
+    if let Some(shadow) = style.shadow {
+        for o in ring_offsets(shadow.spread) {
+            emit(shadow.offset + o, shadow.color);
+        }
+        emit(shadow.offset, shadow.color);
+    }
+    if let Some(outline) = style.outline {
+        for o in ring_offsets(outline.width) {
+            emit(o, outline.color);
+        }
+    }
+    emit(Vec2::ZERO, style.color);
 }
 
 /// Whether text at `px` is drawn: a size that is not positive and finite is
@@ -1335,5 +1422,225 @@ mod tests {
         assert!(big.len() > 40, "10 px ring too sparse: {}", big.len());
         assert!(big.iter().all(|o| o.length() <= 10.001));
         assert!(big.iter().any(|o| o.length() < 5.0), "no inner ring");
+    }
+
+    /// `draw_rotated` at `rotation == 0.0` delegates to `draw` and is
+    /// bit-identical (including outline, shadow, and `pixel_scale`).
+    #[wasm_bindgen_test(unsupported = test)]
+    fn draw_rotated_zero_is_bit_identical_to_draw() {
+        let style = TextStyle::new(24.0, [1.0, 0.8, 0.2, 1.0])
+            .with_outline(1.0)
+            .with_shadow(Vec2::new(4.0, 3.0), 0.0);
+        let top_left = Vec2::new(13.3, 27.7);
+        let pivot = Vec2::new(50.0, 40.0);
+
+        for scale in [1.0, 2.0] {
+            let mut assets_a: Assets<Texture> = Assets::new();
+            let mut tr_a = renderer();
+            tr_a.set_pixel_scale(scale);
+            let mut list_a = DrawList::new();
+            tr_a.draw("Hello", top_left, &style, 1.5, TextChannel::Screen);
+            tr_a.end_frame(&mut assets_a, &mut list_a);
+
+            let mut assets_b: Assets<Texture> = Assets::new();
+            let mut tr_b = renderer();
+            tr_b.set_pixel_scale(scale);
+            let mut list_b = DrawList::new();
+            tr_b.draw_rotated(
+                "Hello",
+                top_left,
+                pivot,
+                0.0,
+                &style,
+                1.5,
+                TextChannel::Screen,
+            );
+            tr_b.end_frame(&mut assets_b, &mut list_b);
+
+            assert_eq!(list_a.screen.len(), list_b.screen.len());
+            for (a, b) in list_a.screen.iter().zip(&list_b.screen) {
+                assert_eq!(a.pos.x.to_bits(), b.pos.x.to_bits());
+                assert_eq!(a.pos.y.to_bits(), b.pos.y.to_bits());
+                assert_eq!(a.rot.to_bits(), 0.0f32.to_bits());
+                assert_eq!(b.rot.to_bits(), 0.0f32.to_bits());
+                assert_eq!(a.src, b.src);
+                assert_eq!(a.scale, b.scale);
+                assert_eq!(a.color, b.color);
+                assert_eq!(a.z, b.z);
+                assert_eq!(a.clip, b.clip);
+            }
+        }
+    }
+
+    /// `draw_rotated` rotates glyph centers (and shadow offsets) about `pivot`
+    /// using `Vec2::from_angle(rotation)` and sets `SpriteInstance::rot`.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn draw_rotated_rotates_centers_around_pivot_and_sets_rot() {
+        use std::f32::consts::FRAC_PI_2;
+
+        let style = TextStyle::new(24.0, [1.0; 4]).with_shadow(Vec2::new(5.0, 5.0), 0.0);
+        let top_left = Vec2::new(40.0, 30.0);
+        let pivot = Vec2::new(40.0, 30.0);
+
+        let mut tr = renderer();
+        let mut assets: Assets<Texture> = Assets::new();
+
+        // Compute the exact unsnapped local glyph centers for "Hello".
+        let baseline = top_left.y + tr.ascent(style.px);
+        let mut local_fill_centers = Vec::new();
+        let mut pen = top_left.x;
+        let mut prev: Option<char> = None;
+        for c in "Hello".chars() {
+            if let Some(p) = prev
+                && let Some(kern) = tr.font.horizontal_kern(p, c, style.px)
+            {
+                pen += kern;
+            }
+            let slot = tr.glyph(c, style.px);
+            if let Some(b) = slot.bitmap {
+                let gx = pen + b.xmin;
+                let gy = baseline - b.ymin - b.h as f32;
+                let size = Vec2::new(b.w as f32, b.h as f32);
+                local_fill_centers.push(Vec2::new(gx, gy) + size * 0.5);
+            }
+            pen += slot.advance;
+            prev = Some(c);
+        }
+        assert_eq!(local_fill_centers.len(), 5);
+
+        for angle in [FRAC_PI_2, -FRAC_PI_2, 0.6] {
+            let mut list = DrawList::new();
+            tr.draw_rotated(
+                "Hello",
+                top_left,
+                pivot,
+                angle,
+                &style,
+                2.0,
+                TextChannel::Screen,
+            );
+            tr.end_frame(&mut assets, &mut list);
+
+            // 5 shadow quads + 5 fill quads.
+            assert_eq!(list.screen.len(), 10);
+            let rot = Vec2::from_angle(angle);
+            let (shadows, fills) = list.screen.split_at(5);
+            for (quad, &local_center) in shadows.iter().zip(&local_fill_centers) {
+                let expected = pivot + rot.rotate(local_center + Vec2::new(5.0, 5.0) - pivot);
+                assert_eq!(quad.rot, angle);
+                assert_eq!(quad.z, 2.0);
+                assert!(
+                    (quad.pos - expected).length() < 1e-4,
+                    "shadow angle={angle}: got {:?}, expected {expected:?}",
+                    quad.pos
+                );
+            }
+            for (quad, &local_center) in fills.iter().zip(&local_fill_centers) {
+                let expected = pivot + rot.rotate(local_center - pivot);
+                assert_eq!(quad.rot, angle);
+                assert_eq!(quad.z, 2.0);
+                assert!(
+                    (quad.pos - expected).length() < 1e-4,
+                    "fill angle={angle}: got {:?}, expected {expected:?}",
+                    quad.pos
+                );
+            }
+            if (angle - FRAC_PI_2).abs() < 1e-6 {
+                for pair in fills.windows(2) {
+                    assert!(
+                        pair[1].pos.y > pair[0].pos.y,
+                        "90 deg CW text should advance downward: {:?} -> {:?}",
+                        pair[0].pos,
+                        pair[1].pos
+                    );
+                }
+            }
+        }
+    }
+
+    /// `draw_rotated` works with `pixel_scale != 1.0`: glyphs rasterize at `s ×`,
+    /// quads keep `scale = 1/s` and `rot = angle`, and centers rotate in layout
+    /// space about `pivot`.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn draw_rotated_works_with_pixel_scale() {
+        let style = TextStyle::new(24.0, [1.0; 4]);
+        let top_left = Vec2::new(20.0, 30.0);
+        let pivot = Vec2::new(50.0, 40.0);
+        let angle = 0.6;
+        let mut assets: Assets<Texture> = Assets::new();
+
+        let mut one = renderer();
+        let mut one_list = DrawList::new();
+        one.draw_rotated(
+            "Hg",
+            top_left,
+            pivot,
+            angle,
+            &style,
+            0.0,
+            TextChannel::Screen,
+        );
+        one.end_frame(&mut assets, &mut one_list);
+
+        let mut two = renderer();
+        two.set_pixel_scale(2.0);
+        let mut two_list = DrawList::new();
+        two.draw_rotated(
+            "Hg",
+            top_left,
+            pivot,
+            angle,
+            &style,
+            0.0,
+            TextChannel::Screen,
+        );
+        two.end_frame(&mut assets, &mut two_list);
+
+        assert_eq!(one_list.screen.len(), two_list.screen.len());
+        for (a, b) in one_list.screen.iter().zip(&two_list.screen) {
+            let (sa, sb) = (a.src.unwrap(), b.src.unwrap());
+            assert_eq!(b.rot, angle);
+            assert_eq!(b.scale, Vec2::splat(0.5));
+            assert!(
+                (sb.size().x - sa.size().x * 2.0).abs() <= 2.0,
+                "raster width should double: {} vs {}",
+                sa.size().x,
+                sb.size().x
+            );
+            let quad = sb.size() * b.scale;
+            assert!(
+                (quad.x - sa.size().x).abs() <= 1.5 && (quad.y - sa.size().y).abs() <= 1.5,
+                "quad size should stay in layout units: {quad:?} vs {sa:?}"
+            );
+            assert!(
+                (b.pos - a.pos).length() <= 1.5,
+                "rotated center drifted under pixel_scale=2: {:?} vs {:?}",
+                b.pos,
+                a.pos
+            );
+        }
+    }
+
+    /// Non-finite rotation angles draw nothing and open no atlas pages.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn draw_rotated_non_finite_angle_draws_nothing() {
+        let mut tr = renderer();
+        let mut assets: Assets<Texture> = Assets::new();
+        let style = TextStyle::new(24.0, [1.0; 4]);
+        for angle in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut list = DrawList::new();
+            tr.draw_rotated(
+                "Hello",
+                Vec2::ZERO,
+                Vec2::ZERO,
+                angle,
+                &style,
+                0.0,
+                TextChannel::Screen,
+            );
+            tr.end_frame(&mut assets, &mut list);
+            assert!(list.screen.is_empty(), "{angle} drew glyphs");
+        }
+        assert_eq!(tr.page_count(), 0);
     }
 }
