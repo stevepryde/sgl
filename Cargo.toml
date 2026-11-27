@@ -90,6 +90,7 @@ log = "0.4.29"
 console_error_panic_hook = "0.1.7"
 pollster = "0.4.0"
 postcard = { version = "1.1", default-features = false, features = ["alloc"] }
+rodio = { version = "0.22", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sp-fidelity = "0.3.4"

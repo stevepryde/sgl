@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-audio` (new crate) adds deterministic 3D distance attenuation and constant-power stereo panning (`Listener3d`, `SpatialMix`, `spatialize`, always available including `wasm32` and `--no-default-features`) and `AudioEngine` (`EmitterState`, `AudioError`, `StereoPannedSource` on native `playback`), with live atomic stereo gain updates over `rodio` (WAV/PCM/MP3 via `symphonia`) and `AudioEngine::headless` for headless tests and servers ([guide](crates/sgl-audio/README.md)). No game-code changes are needed; a game that adds `sgl-audio` with default `playback` regenerates its distribution notices (`rodio` and its `symphonia` decoders bring MPL-2.0 and permissive dependency notices).
+- `sgl-3d` adds per-instance material overrides (`MaterialOverride { tint, alpha, emissive }`, `Scene::set_instance_material_override`, `Scene::instance_material_override`): multiplies a model's base linear colour and alpha (switching opaque base materials to blended transparency below `0.999`) and adds linear emission for one instance without duplicating geometry or mutating other instances sharing the model; passing `None` or an identity override restores the base materials and frees the cloned slots. No game-code changes are needed.
+- `sgl-3d` `sprite::SpriteBlend` gains `Additive` (`SrcAlpha` + `One`, writing no depth, ordered among blended surfaces, for embers, sparks, lightning and glowing particles). Exhaustive matches on `sprite::SpriteBlend` add a `SpriteBlend::Additive` arm; no other game-code changes are needed.
+
 ## 0.12.1 — 2026-11-27
 
 No game code, data or settings need to change.

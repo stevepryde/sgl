@@ -567,7 +567,9 @@ impl super::Scene {
                             .deformation
                             .as_ref()
                             .map(|deformation| deformation.mesh_bounds.clone()),
-                        instance.material_override_meshes().map(<[MaterialId]>::to_vec),
+                        instance
+                            .material_override_meshes()
+                            .map(<[MaterialId]>::to_vec),
                     )
                 };
                 let meshes = match overrides.as_deref() {

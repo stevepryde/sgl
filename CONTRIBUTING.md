@@ -159,7 +159,7 @@ anything else the patch.
    `## X.Y.Z — YYYY-MM-DD` section under an empty `Unreleased`, merging
    entries that changed the same symbol, with an opening paragraph that says
    whether game code, data or settings must change. Set
-   `workspace.package.version` and the eight internal requirements in the root
+   `workspace.package.version` and the nine internal requirements in the root
    `Cargo.toml`, then run `cargo update --workspace`: the lockfile changes
    only the workspace's own versions.
 3. **Package.** `cargo publish --workspace --dry-run` passes on that tree.
@@ -167,7 +167,7 @@ anything else the patch.
    message says why the release is breaking or not and what was run.
 5. **Tag** that commit `vX.Y.Z`, annotated `SGL X.Y.Z`, and push the tag.
 6. **Publish** from that commit in a clean checkout:
-   `cargo publish --workspace`. Cargo orders the eight crates and skips the
+   `cargo publish --workspace`. Cargo orders the nine crates and skips the
    unpublished companions. It uses the publishing machine's own Cargo login;
    never put a token in the repository.
 

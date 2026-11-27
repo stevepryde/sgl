@@ -738,11 +738,7 @@ impl Scene {
             if let Some(old_override) = old_override {
                 self.release_material_override(old_override);
             }
-            self.instances
-                .slots
-                .get_mut(id)
-                .unwrap()
-                .material_override = switched_override;
+            self.instances.slots.get_mut(id).unwrap().material_override = switched_override;
         }
         if previous != state.model {
             self.models.get_mut(previous)?.instances -= 1;
@@ -1022,7 +1018,12 @@ impl Scene {
                         Some(&per_mesh),
                     );
                     self.candidates
-                        .place(id.index(), (model_id, &meshes), mirrored, deformed.as_deref())
+                        .place(
+                            id.index(),
+                            (model_id, &meshes),
+                            mirrored,
+                            deformed.as_deref(),
+                        )
                         .expect("dry run verified candidates fit");
                 }
                 self.edited();
@@ -1147,10 +1148,7 @@ impl Scene {
             }
         }
         self.refresh_scene_group(device);
-        let per_mesh = mesh_indices
-            .into_iter()
-            .map(|idx| cloned[idx].1)
-            .collect();
+        let per_mesh = mesh_indices.into_iter().map(|idx| cloned[idx].1).collect();
         Ok(InstanceMaterialOverride {
             override_: ov,
             cloned,
@@ -1240,10 +1238,7 @@ impl Scene {
                 {
                     let model_id = instance.state.model;
                     let mirrored = instance.state.pose.determinant() < 0.;
-                    let deformed = instance
-                        .deformation
-                        .as_ref()
-                        .map(|d| d.mesh_bounds.clone());
+                    let deformed = instance.deformation.as_ref().map(|d| d.mesh_bounds.clone());
                     let per_mesh = instance
                         .material_override_meshes()
                         .map(<[MaterialId]>::to_vec);

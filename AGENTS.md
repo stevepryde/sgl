@@ -53,7 +53,7 @@ compatibility shims solely to avoid updating consumers.
   with any required data conversion or explicit re-export, and what to
   exercise afterwards only when it is not obvious. Never require regeneration
   for unrelated edits or dependency bumps.
-- All eight library crates share `workspace.package.version` in the root
+- All nine library crates share `workspace.package.version` in the root
   `Cargo.toml`; keep `version.workspace = true` in each crate. Update the
   root's internal dependency version requirements alongside release bumps.
 - At release, move those entries into a dated version section, merging

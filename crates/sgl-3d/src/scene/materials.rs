@@ -768,8 +768,7 @@ impl Materials {
         let flags = src.flags;
         let params_bytes = src.params.as_ref().map(|p| p.bytes().to_vec());
 
-        let uniform =
-            MaterialUniform::new(&values, bound.maps.maps(), &bound.samplers, &bound.uvs);
+        let uniform = MaterialUniform::new(&values, bound.maps.maps(), &bound.samplers, &bound.uvs);
         let more_maps = crate::shading::material::more_maps(&bound.samplers, &bound.uvs);
         let record = rays.add_material(
             device,

@@ -21,6 +21,7 @@ reference do not need to be in every prompt.
 | Add multiplayer transport | [sgl-net](../crates/sgl-net/README.md) | [Transport API](../crates/sgl-net/src/lib.rs) |
 | Predict the local player and interpolate everyone else over the network | [sgl-core](../crates/sgl-core/README.md) | [`prediction`](../crates/sgl-core/src/prediction.rs) |
 | Add controller support | [sgl-input](../crates/sgl-input/README.md) | [Controller example](../examples/sgl-input/examples/controllers.rs) |
+| Play 3D spatialized or 2D audio | [sgl-audio](../crates/sgl-audio/README.md) | [Public API](../crates/sgl-audio/src/lib.rs) |
 | Work directly with GPU post-effects | [sgl-post-fx](../crates/sgl-post-fx/README.md) | [SGL3D integration](../crates/sgl-3d/src/view/post_fx.rs) |
 
 ## Add SGL to a game

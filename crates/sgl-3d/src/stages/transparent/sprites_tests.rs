@@ -1025,7 +1025,11 @@ fn additive_sprites_sum_their_light_without_writing_depth() {
         near(actual, expected),
         "expected additive sum {expected:?}, got {actual:?}"
     );
-    assert_eq!(at(&depth, centre), 0.0, "additive sprites must not write depth");
+    assert_eq!(
+        at(&depth, centre),
+        0.0,
+        "additive sprites must not write depth"
+    );
 
     // Also exercise the temporal-masked additive pipeline (ADDITIVE_MASKED_FS_ENTRY).
     let mut taa_frames = Frames::new(&device, &queue, settings(settings::Antialiasing::Taa));

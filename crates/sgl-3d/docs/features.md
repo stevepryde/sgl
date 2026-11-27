@@ -313,7 +313,11 @@ them through unrefracted. A probe captured on an
   image is too large) and 8 GiB natively.
   [Decals](../README.md#decals).
 - **Material edits** at runtime: `Scene::set_material` (`SurfaceMaterial`,
-  whose default is glTF's default material).
+  whose default is glTF's default material), and per-instance overrides via
+  `Scene::set_instance_material_override` / `instance_material_override`
+  (`MaterialOverride`: linear `tint`, `alpha` multiplier switching opaque base
+  materials to blended below `0.999`, and additive `emissive`, without
+  duplicating geometry or mutating other instances of the same model).
 - **Visibility groups**: `FrameInput::visibility_mask` switches material
   groups on and off per frame, including in probe captures.
 - **Culling and LOD**: automatic. The GPU builds the camera's opaque and
@@ -653,7 +657,7 @@ every one as a job for the game's worker threads
 - **Sprites**: batches of textured world-space quads, one instanced draw
   each (`Scene::add_sprite_batch`, `set_sprites`, `sprite::Sprite`):
   facing the view's image plane or upright along an axis
-  (`SpriteFacing`), blended and sorted or masked with depth and motion
+  (`SpriteFacing`), blended and sorted, additive, or masked with depth and motion
   (`SpriteBlend`), sized in metres or kept on screen (`SpriteSizing`), an
   atlas cell each (`SpriteRegion::cell`, a flipbook the game advances),
   unlit, tinted and fogged. [Sprites](../README.md#world-space-sprites).

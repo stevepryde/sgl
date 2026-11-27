@@ -4959,6 +4959,9 @@ scene.set_sprites(&device, &queue, smoke, &puffs.iter().map(|p| Sprite {
   its quads being parallel, each view re-sorting and uploading the order
   only when the batch, its facing or (for upright cards) its eye changed;
   among blended surfaces by its bounds' centre, as a mesh is.
+  `SpriteBlend::Additive` adds `SrcAlpha` onto `One` without writing depth,
+  ordered among blended surfaces, for embers, sparks, lightning and glowing
+  particles.
   `Masked { cutoff }` is opaque where alpha reaches the cutoff: it writes
   depth and motion before reflections and the temporal stages, so it
   occludes, is focused and reprojects as opaque geometry, and needs no

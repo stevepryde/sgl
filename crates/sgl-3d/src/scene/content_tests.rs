@@ -2467,7 +2467,10 @@ fn instance_material_override_tints_emits_fades_and_leaves_siblings_untouched() 
         .add_instance(
             &device,
             &queue,
-            state(ids.model, Mat4::from_translation(Vec3::new(-1.5, 0.0, -5.0))),
+            state(
+                ids.model,
+                Mat4::from_translation(Vec3::new(-1.5, 0.0, -5.0)),
+            ),
             Mobility::Moving,
         )
         .unwrap();
@@ -2551,7 +2554,10 @@ fn instance_material_override_tints_emits_fades_and_leaves_siblings_untouched() 
     assert_eq!(cloned_vals.base, [0.1, 0.4, 0.2, 1.0]);
     assert_eq!(cloned_vals.emission, [2.0, 0.5, 0.0]);
     assert_eq!(cloned_vals.alpha, AlphaMode::Opaque);
-    assert_eq!(scene.material(base_mat_id).unwrap().base, [0.5, 0.5, 0.5, 1.0]);
+    assert_eq!(
+        scene.material(base_mat_id).unwrap().base,
+        [0.5, 0.5, 0.5, 1.0]
+    );
 
     // Update override in place to alpha < 0.999: reuses same cloned slot and switches to Blend.
     let ov2 = MaterialOverride {
@@ -2602,7 +2608,12 @@ fn instance_material_override_tints_emits_fades_and_leaves_siblings_untouched() 
         ..Settings::default()
     };
     let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
-    let output = crate::view::targets::target(&device, "override test", size, crate::shading::gbuffer::COLOR);
+    let output = crate::view::targets::target(
+        &device,
+        "override test",
+        size,
+        crate::shading::gbuffer::COLOR,
+    );
     let cam = Camera {
         view: camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::new(0.0, 0.0, -5.0), Vec3::Y),
         projection: perspective(1.0, 1.0, 0.1),
@@ -2611,7 +2622,14 @@ fn instance_material_override_tints_emits_fades_and_leaves_siblings_untouched() 
     let input = FrameInput::new(cam);
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.render(
-        &device, &queue, &mut encoder, &mut scene, &input, &settings, &output, None,
+        &device,
+        &queue,
+        &mut encoder,
+        &mut scene,
+        &input,
+        &settings,
+        &output,
+        None,
     );
     queue.submit([encoder.finish()]);
     renderer.finish_frame(&mut scene);
@@ -2628,7 +2646,10 @@ fn instance_material_override_tints_emits_fades_and_leaves_siblings_untouched() 
     scene
         .set_instance_material_override(&device, &queue, inst_a, Some(ov1))
         .unwrap();
-    assert_eq!(scene.materials.slots.iter().count(), base_material_count + 1);
+    assert_eq!(
+        scene.materials.slots.iter().count(),
+        base_material_count + 1
+    );
     scene.remove_instance(inst_a).unwrap();
     assert_eq!(scene.materials.slots.iter().count(), base_material_count);
     assert!(matches!(

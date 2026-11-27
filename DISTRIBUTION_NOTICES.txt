@@ -7,6 +7,8 @@ Alternative licence texts are retained as supplied; this does not require choosi
 adler2@2.0.1 — authors: Jonas Schievink <jonasschievink@gmail.com>, oyvindln <oyvindln@users.noreply.github.com>
 ahash@0.8.12 — authors: Tom Kaitchuck <Tom.Kaitchuck@gmail.com>
 allocator-api2@0.2.21 — authors: Zakarum <zaq.dev@icloud.com>
+alsa-sys@0.4.0 — authors: Pierre Krieger <pierre.krieger1708@gmail.com>, David Henningsson <coding@diwic.se>
+alsa@0.11.0 — authors: David Henningsson <coding@diwic.se>
 android_system_properties@0.1.6 — authors: Nicolas Silva <nical@fastmail.com>
 android-activity@0.6.1
 android-properties@0.2.2 — authors: Mikhail Lappo <mikhail.lappo@esrlabs.com>
@@ -36,6 +38,7 @@ bytes@1.12.1 — authors: Carl Lerche <me@carllerche.com>, Sean McArthur <sean@s
 calloop-wayland-source@0.3.0 — authors: Kirill Chibisov <contact@kchibisov.com>
 calloop@0.13.0 — authors: Elinor Berger <elinor@safaradeg.net>
 cc@1.4.2
+cesu8@1.1.0 — authors: Eric Kidd <git@randomhacks.net>
 cfg_aliases@0.2.2 — authors: Zicklag <zicklag@katharostech.com>
 cfg-if@1.0.4 — authors: Alex Crichton <alex@alexcrichton.com>
 codespan-reporting@0.13.1 — authors: Brendan Zabarauskas <bjzaba@yahoo.com.au>
@@ -43,11 +46,14 @@ combine@4.6.7 — authors: Markus Westerlind <marwes91@gmail.com>
 concurrent-queue@2.5.0 — authors: Stjepan Glavina <stjepang@gmail.com>, Taiki Endo <te316e89@gmail.com>, John Nunley <dev@notgull.net>
 console_error_panic_hook@0.1.7 — authors: Nick Fitzgerald <fitzgen@gmail.com>
 constant_time_eq@0.4.2 — authors: Cesar Eduardo Barros <cesarb@cesarb.eti.br>
+core_detect@1.0.0 — authors: Thom Chiovoloni <chiovolonit@gmail.com>
 core_maths@0.1.1 — authors: Robert Bastian <me@robertbastian.dev
 core-foundation-sys@0.8.7 — authors: The Servo Project Developers
 core-foundation@0.9.4 — authors: The Servo Project Developers
 core-graphics-types@0.1.3 — authors: The Servo Project Developers
 core-graphics@0.23.2 — authors: The Servo Project Developers
+coreaudio-rs@0.14.2 — authors: mitchmindtree <mitchell.nordine@gmail.com>, yupferris <jake@fusetools.com>
+cpal@0.17.3
 cpufeatures@0.2.17 — authors: RustCrypto Developers
 cpufeatures@0.3.0 — authors: RustCrypto Developers
 crc32fast@1.5.1 — authors: Sam Rijs <srijs@airpost.net>, Alex Crichton <alex@alexcrichton.com>
@@ -55,15 +61,19 @@ crossbeam-utils@0.8.22
 crunchy@0.2.4 — authors: Eira Fransham <jackefransham@gmail.com>
 crypto-common@0.1.7 — authors: RustCrypto Developers
 cursor-icon@1.2.0 — authors: Kirill Chibisov <contact@kchibisov.com>
+dasp_sample@0.11.0 — authors: mitchmindtree <mitchell.nordine@gmail.com>
 data-encoding@2.11.1
 digest@0.10.7 — authors: RustCrypto Developers
 dispatch@0.2.0 — authors: Steven Sheldon
+dispatch2@0.3.1 — authors: Mads Marquart <mads@marquart.dk>, Mary <mary@mary.zone>
 dlib@0.5.3 — authors: Elinor Berger <elinor@safaradeg.net>
 document-features@0.2.12 — authors: Slint Developers <info@slint.dev>
 downcast-rs@1.2.1 — authors: Ashish Myles <marcianx@gmail.com>, Runji Wang <wangrunji0408@163.com>
 dpi@0.1.2
+encoding_rs@0.8.44 — authors: Henri Sivonen <hsivonen@hsivonen.fi>
 equivalent@1.0.2
 errno@0.3.14 — authors: Chris Wong <lambda.fairy@gmail.com>, Dan Gohman <dev@sunfishcode.online>
+extended@0.1.0 — authors: Dietrich Epp <depp@zdome.net>
 fastrand@2.5.0 — authors: Stjepan Glavina <stjepang@gmail.com>
 fdeflate@0.3.7 — authors: The image-rs Developers
 find-msvc-tools@0.1.10
@@ -110,6 +120,7 @@ jni-macros@0.22.4
 jni-sys-macros@0.4.1 — authors: Robert Bragg <robert@sixbynine.org>
 jni-sys@0.3.1 — authors: Steven Fackler <sfackler@gmail.com>
 jni-sys@0.4.1 — authors: Steven Fackler <sfackler@gmail.com>, Robert Bragg <robert@sixbynine.org>
+jni@0.21.1 — authors: Josh Chase <josh@prevoty.com>
 jni@0.22.4 — authors: jni team
 jobserver@0.1.35 — authors: Alex Crichton <alex@alexcrichton.com>
 js-sys@0.3.106 — authors: The wasm-bindgen Developers
@@ -127,12 +138,14 @@ linux-raw-sys@0.4.15 — authors: Dan Gohman <dev@sunfishcode.online>
 litrs@1.0.0 — authors: Lukas Kalbertodt <lukas.kalbertodt@gmail.com>
 lock_api@0.4.14 — authors: Amanieu d'Antras <amanieu@gmail.com>
 log@0.4.33 — authors: The Rust Project Developers
+mach2@0.5.0
 memchr@2.8.3 — authors: Andrew Gallant <jamslam@gmail.com>, bluss
 memmap2@0.9.11 — authors: Dan Burkert <dan@danburkert.com>, Yevhenii Reizner <razrfalcon@gmail.com>, The Contributors
 miniz_oxide@0.8.9 — authors: Frommi <daniil.liferenko@gmail.com>, oyvindln <oyvindln@users.noreply.github.com>, Rich Geldreich richgel99@gmail.com
 miniz_oxide@0.9.1 — authors: Frommi <daniil.liferenko@gmail.com>, oyvindln <oyvindln@users.noreply.github.com>, Rich Geldreich richgel99@gmail.com
 mio@1.2.3 — authors: Carl Lerche <me@carllerche.com>, Thomas de Zeeuw <thomasdezeeuw@gmail.com>, Tokio Contributors <team@tokio.rs>
 moxcms@0.8.1 — authors: Radzivon Bartoshyk
+multiversion_no_op@1.0.0 — authors: Henri Sivonen <hsivonen@hsivonen.fi>
 naga-types@30.0.1 — authors: gfx-rs developers
 naga@30.0.1 — authors: gfx-rs developers
 ndk-context@0.1.1 — authors: The Rust Windowing contributors
@@ -141,9 +154,17 @@ ndk@0.9.0 — authors: The Rust Mobile contributors
 nix@0.31.3
 num_enum_derive@0.7.6 — authors: Daniel Wagner-Hall <dawagner@gmail.com>, Daniel Henry-Mantilla <daniel.henry.mantilla@gmail.com>, Vincent Esche <regexident@gmail.com>
 num_enum@0.7.6 — authors: Daniel Wagner-Hall <dawagner@gmail.com>, Daniel Henry-Mantilla <daniel.henry.mantilla@gmail.com>, Vincent Esche <regexident@gmail.com>
+num-bigint@0.4.8 — authors: The Rust Project Developers
+num-derive@0.4.2 — authors: The Rust Project Developers
+num-integer@0.1.47 — authors: The Rust Project Developers
+num-rational@0.4.2 — authors: The Rust Project Developers
 num-traits@0.2.19 — authors: The Rust Project Developers
 objc-sys@0.3.5 — authors: Mads Marquart <mads@marquart.dk>
 objc2-app-kit@0.2.2
+objc2-audio-toolbox@0.3.2
+objc2-avf-audio@0.3.2
+objc2-core-audio-types@0.3.2
+objc2-core-audio@0.3.2
 objc2-core-foundation@0.3.2
 objc2-core-graphics@0.3.2
 objc2-encode@4.1.0 — authors: Mads Marquart <mads@marquart.dk>
@@ -194,6 +215,7 @@ redox_syscall@0.4.1 — authors: Jeremy Soller <jackpot51@gmail.com>
 redox_syscall@0.5.18 — authors: Jeremy Soller <jackpot51@gmail.com>
 redox_syscall@0.9.1 — authors: Jeremy Soller <jackpot51@gmail.com>
 renderdoc-sys@1.1.0 — authors: Eyal Kalderon <ebkalderon@gmail.com>
+rodio@0.22.2
 rustc_version@0.4.1
 rustc-hash@1.1.0 — authors: The Rust Project Developers
 rustix@0.38.44 — authors: Dan Gohman <dev@sunfishcode.online>, Jakub Konka <kubkon@jakubkonka.com>
@@ -209,6 +231,7 @@ serde_json@1.0.151 — authors: Erick Tryzelaar <erick.tryzelaar@gmail.com>, Dav
 serde@1.0.229 — authors: Erick Tryzelaar <erick.tryzelaar@gmail.com>, David Tolnay <dtolnay@gmail.com>
 sgl-2d
 sgl-3d
+sgl-audio
 sgl-core
 sgl-input
 sgl-net
@@ -229,6 +252,12 @@ sp-fidelity-wgpu@0.3.4
 sp-fidelity@0.3.4
 spirv@0.4.0+sdk-1.4.341.0 — authors: Lei Zhang <antiagainst@gmail.com>
 static_assertions@1.1.0 — authors: Nikolai Vazquez
+symphonia-bundle-mp3@0.5.5 — authors: Philip Deljanov <philip.deljanov@gmail.com>
+symphonia-codec-pcm@0.5.5 — authors: Philip Deljanov <philip.deljanov@gmail.com>
+symphonia-core@0.5.5 — authors: Philip Deljanov <philip.deljanov@gmail.com>
+symphonia-format-riff@0.5.5 — authors: Philip Deljanov <philip.deljanov@gmail.com>, dedobbin <dedobbindedobbin@gmail.com>
+symphonia-metadata@0.5.5 — authors: Philip Deljanov <philip.deljanov@gmail.com>
+symphonia@0.5.5 — authors: Philip Deljanov <philip.deljanov@gmail.com>
 syn@2.0.119 — authors: David Tolnay <dtolnay@gmail.com>
 syn@3.0.3 — authors: David Tolnay <dtolnay@gmail.com>
 termcolor@1.4.1 — authors: Andrew Gallant <jamslam@gmail.com>
@@ -281,13 +310,20 @@ wgpu-naga-bridge@30.0.1 — authors: gfx-rs developers
 wgpu-types@30.0.1 — authors: gfx-rs developers
 wgpu@30.0.1 — authors: gfx-rs developers
 winapi-util@0.1.11 — authors: Andrew Gallant <jamslam@gmail.com>
+windows_aarch64_gnullvm@0.42.2 — authors: Microsoft
 windows_aarch64_gnullvm@0.52.6 — authors: Microsoft
+windows_aarch64_msvc@0.42.2 — authors: Microsoft
 windows_aarch64_msvc@0.52.6 — authors: Microsoft
+windows_i686_gnu@0.42.2 — authors: Microsoft
 windows_i686_gnu@0.52.6 — authors: Microsoft
 windows_i686_gnullvm@0.52.6 — authors: Microsoft
+windows_i686_msvc@0.42.2 — authors: Microsoft
 windows_i686_msvc@0.52.6 — authors: Microsoft
+windows_x86_64_gnu@0.42.2 — authors: Microsoft
 windows_x86_64_gnu@0.52.6 — authors: Microsoft
+windows_x86_64_gnullvm@0.42.2 — authors: Microsoft
 windows_x86_64_gnullvm@0.52.6 — authors: Microsoft
+windows_x86_64_msvc@0.42.2 — authors: Microsoft
 windows_x86_64_msvc@0.52.6 — authors: Microsoft
 windows-collections@0.3.2
 windows-core@0.62.2
@@ -298,9 +334,11 @@ windows-link@0.2.1
 windows-numerics@0.3.1
 windows-result@0.4.1
 windows-strings@0.5.1
+windows-sys@0.45.0 — authors: Microsoft
 windows-sys@0.52.0 — authors: Microsoft
 windows-sys@0.59.0 — authors: Microsoft
 windows-sys@0.61.2
+windows-targets@0.42.2 — authors: Microsoft
 windows-targets@0.52.6 — authors: Microsoft
 windows-threading@0.2.1
 windows@0.62.2
@@ -729,7 +767,7 @@ Apache License
    See the License for the specific language governing permissions and
    limitations under the License.
 
---- Applies to: as-raw-xcb-connection@1.0.1, codespan-reporting@0.13.1, raw-window-metal@1.1.0, sgl-2d, sgl-3d, sgl-core, sgl-input, sgl-net, sgl-physics, sgl-webgpu, static_assertions@1.1.0, x11rb-protocol@0.13.2, x11rb@0.13.2, zeroize@1.9.0, zune-core@0.5.3, zune-jpeg@0.5.15
+--- Applies to: as-raw-xcb-connection@1.0.1, codespan-reporting@0.13.1, cpal@0.17.3, encoding_rs@0.8.44, multiversion_no_op@1.0.0, raw-window-metal@1.1.0, sgl-2d, sgl-3d, sgl-audio, sgl-core, sgl-input, sgl-net, sgl-physics, sgl-webgpu, static_assertions@1.1.0, x11rb-protocol@0.13.2, x11rb@0.13.2, zeroize@1.9.0, zune-core@0.5.3, zune-jpeg@0.5.15
 
 Apache License
                            Version 2.0, January 2004
@@ -1154,7 +1192,7 @@ prospectively choose to deem waived or otherwise exclude such Section(s) of
 the License, but only in their entirety and only with respect to the Combined
 Software.
 
---- Applies to: windows-collections@0.3.2, windows-core@0.62.2, windows-future@0.3.2, windows-implement@0.60.2, windows-interface@0.59.3, windows-link@0.2.1, windows-numerics@0.3.1, windows-result@0.4.1, windows-strings@0.5.1, windows-sys@0.52.0, windows-sys@0.59.0, windows-sys@0.61.2, windows-targets@0.52.6, windows-threading@0.2.1, windows@0.62.2, windows_aarch64_gnullvm@0.52.6, windows_aarch64_msvc@0.52.6, windows_i686_gnu@0.52.6, windows_i686_gnullvm@0.52.6, windows_i686_msvc@0.52.6, windows_x86_64_gnu@0.52.6, windows_x86_64_gnullvm@0.52.6, windows_x86_64_msvc@0.52.6
+--- Applies to: windows-collections@0.3.2, windows-core@0.62.2, windows-future@0.3.2, windows-implement@0.60.2, windows-interface@0.59.3, windows-link@0.2.1, windows-numerics@0.3.1, windows-result@0.4.1, windows-strings@0.5.1, windows-sys@0.45.0, windows-sys@0.52.0, windows-sys@0.59.0, windows-sys@0.61.2, windows-targets@0.42.2, windows-targets@0.52.6, windows-threading@0.2.1, windows@0.62.2, windows_aarch64_gnullvm@0.42.2, windows_aarch64_gnullvm@0.52.6, windows_aarch64_msvc@0.42.2, windows_aarch64_msvc@0.52.6, windows_i686_gnu@0.42.2, windows_i686_gnu@0.52.6, windows_i686_gnullvm@0.52.6, windows_i686_msvc@0.42.2, windows_i686_msvc@0.52.6, windows_x86_64_gnu@0.42.2, windows_x86_64_gnu@0.52.6, windows_x86_64_gnullvm@0.42.2, windows_x86_64_gnullvm@0.52.6, windows_x86_64_msvc@0.42.2, windows_x86_64_msvc@0.52.6
 
 Apache License
                            Version 2.0, January 2004
@@ -3807,7 +3845,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
---- Applies to: ahash@0.8.12, arrayvec@0.7.8, atomic-waker@1.1.2, autocfg@1.5.1, base64@0.13.1, bitflags@1.3.2, bitflags@2.13.1, bumpalo@3.20.3, cc@1.4.2, cfg-if@1.0.4, concurrent-queue@2.5.0, core-foundation-sys@0.8.7, core-foundation@0.9.4, core-graphics-types@0.1.3, core-graphics@0.23.2, crossbeam-utils@0.8.22, equivalent@1.0.2, errno@0.3.14, fastrand@2.5.0, find-msvc-tools@0.1.10, fixedbitset@0.5.7, flate2@1.1.10, fnv@1.0.7, gethostname@1.1.0, glow@0.17.0, gltf-derive@1.4.1, gltf-json@1.4.1, gltf@1.4.1, hashbrown@0.15.5, hashbrown@0.16.1, hashbrown@0.17.1, hermit-abi@0.5.2, httparse@1.10.1, indexmap@2.14.0, jobserver@0.1.35, js-sys@0.3.106, khronos-egl@6.0.0, lazy_static@1.5.0, linux-raw-sys@0.12.1, linux-raw-sys@0.4.15, lock_api@0.4.14, log@0.4.33, num-traits@0.2.19, once_cell@1.21.4, parking_lot@0.12.5, parking_lot_core@0.9.12, percent-encoding@2.3.2, petgraph@0.8.3, pkg-config@0.3.33, plain@0.2.3, png@0.18.1, polling@3.11.0, pollster@0.4.0, renderdoc-sys@1.1.0, rustc-hash@1.1.0, rustc_version@0.4.1, rustix@0.38.44, rustix@1.1.4, scoped-tls@1.0.1, scopeguard@1.2.0, simd_cesu8@1.2.0, smallvec@1.15.2, smol_str@0.2.2, ttf-parser@0.25.1, tungstenite@0.29.0, unicode-segmentation@1.13.3, unicode-width@0.2.2, unicode-xid@0.2.6, uuid@1.26.1, version_check@0.9.5, wasi@0.11.1+wasi-snapshot-preview1, wasip2@1.0.4+wasi-0.2.12, wasm-bindgen-futures@0.4.79, wasm-bindgen-macro-support@0.2.129, wasm-bindgen-macro@0.2.129, wasm-bindgen-shared@0.2.129, wasm-bindgen@0.2.129, web-sys@0.3.106, wit-bindgen@0.57.1
+--- Applies to: ahash@0.8.12, arrayvec@0.7.8, atomic-waker@1.1.2, autocfg@1.5.1, base64@0.13.1, bitflags@1.3.2, bitflags@2.13.1, bumpalo@3.20.3, cc@1.4.2, cfg-if@1.0.4, concurrent-queue@2.5.0, core-foundation-sys@0.8.7, core-foundation@0.9.4, core-graphics-types@0.1.3, core-graphics@0.23.2, core_detect@1.0.0, coreaudio-rs@0.14.2, crossbeam-utils@0.8.22, equivalent@1.0.2, errno@0.3.14, fastrand@2.5.0, find-msvc-tools@0.1.10, fixedbitset@0.5.7, flate2@1.1.10, fnv@1.0.7, gethostname@1.1.0, glow@0.17.0, gltf-derive@1.4.1, gltf-json@1.4.1, gltf@1.4.1, hashbrown@0.15.5, hashbrown@0.16.1, hashbrown@0.17.1, hermit-abi@0.5.2, httparse@1.10.1, indexmap@2.14.0, jni@0.21.1, jobserver@0.1.35, js-sys@0.3.106, khronos-egl@6.0.0, lazy_static@1.5.0, linux-raw-sys@0.12.1, linux-raw-sys@0.4.15, lock_api@0.4.14, log@0.4.33, num-bigint@0.4.8, num-derive@0.4.2, num-integer@0.1.47, num-rational@0.4.2, num-traits@0.2.19, once_cell@1.21.4, parking_lot@0.12.5, parking_lot_core@0.9.12, percent-encoding@2.3.2, petgraph@0.8.3, pkg-config@0.3.33, plain@0.2.3, png@0.18.1, polling@3.11.0, pollster@0.4.0, renderdoc-sys@1.1.0, rustc-hash@1.1.0, rustc_version@0.4.1, rustix@0.38.44, rustix@1.1.4, scoped-tls@1.0.1, scopeguard@1.2.0, simd_cesu8@1.2.0, smallvec@1.15.2, smol_str@0.2.2, ttf-parser@0.25.1, tungstenite@0.29.0, unicode-segmentation@1.13.3, unicode-width@0.2.2, unicode-xid@0.2.6, uuid@1.26.1, version_check@0.9.5, wasi@0.11.1+wasi-snapshot-preview1, wasip2@1.0.4+wasi-0.2.12, wasm-bindgen-futures@0.4.79, wasm-bindgen-macro-support@0.2.129, wasm-bindgen-macro@0.2.129, wasm-bindgen-shared@0.2.129, wasm-bindgen@0.2.129, web-sys@0.3.106, wit-bindgen@0.57.1
 
 Apache License
                         Version 2.0, January 2004
@@ -5559,7 +5597,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
---- Applies to: allocator-api2@0.2.21, android-activity@0.6.1, android_system_properties@0.1.6, bevy_mikktspace@1.0.0, blake3@1.8.6, constant_time_eq@0.4.2, document-features@0.2.12, fdeflate@0.3.7, fontdue@0.9.4, gilrs-core@0.6.8, gilrs@0.11.2, gl_generator@0.14.0, half@2.7.1, image@0.25.10, itoa@1.0.18, jni-macros@0.22.4, jni-sys-macros@0.4.1, jni@0.22.4, khronos_api@3.1.0, libc@0.2.189, litrs@1.0.0, miniz_oxide@0.8.9, miniz_oxide@0.9.1, naga-types@30.0.1, naga@30.0.1, ndk-context@0.1.1, ndk-sys@0.6.0+11769913, ndk@0.9.0, num_enum@0.7.6, num_enum_derive@0.7.6, objc2-core-foundation@0.3.2, objc2-core-graphics@0.3.2, objc2-game-controller@0.3.2, objc2-io-kit@0.3.2, objc2-metal@0.3.2, objc2-quartz-core@0.3.2, pin-project-internal@1.1.13, pin-project-lite@0.2.17, pin-project@1.1.13, portable-atomic-util@0.2.7, portable-atomic@1.14.0, proc-macro2@1.0.107, profiling@1.0.18, quote@1.0.47, r-efi@5.3.0, r-efi@6.0.0, rand@0.9.5, rand_chacha@0.9.0, range-alloc@0.1.5, raw-window-handle@0.6.2, rustversion@1.0.23, semver@1.0.28, serde@1.0.229, serde_core@1.0.229, serde_derive@1.0.229, serde_json@1.0.151, shlex@2.0.1, simdutf8@0.1.5, spirv@0.4.0+sdk-1.4.341.0, syn@2.0.119, syn@3.0.3, thiserror-impl@1.0.69, thiserror-impl@2.0.20, thiserror@1.0.69, thiserror@2.0.20, unicode-ident@1.0.24, wgpu-core-deps-apple@30.0.1, wgpu-core-deps-emscripten@30.0.1, wgpu-core-deps-windows-linux-android@30.0.1, wgpu-core@30.0.1, wgpu-hal@30.0.1, wgpu-naga-bridge@30.0.1, wgpu-types@30.0.1, wgpu@30.0.1
+--- Applies to: allocator-api2@0.2.21, alsa@0.11.0, android-activity@0.6.1, android_system_properties@0.1.6, bevy_mikktspace@1.0.0, blake3@1.8.6, cesu8@1.1.0, constant_time_eq@0.4.2, dasp_sample@0.11.0, dispatch2@0.3.1, document-features@0.2.12, fdeflate@0.3.7, fontdue@0.9.4, gilrs-core@0.6.8, gilrs@0.11.2, gl_generator@0.14.0, half@2.7.1, image@0.25.10, itoa@1.0.18, jni-macros@0.22.4, jni-sys-macros@0.4.1, jni@0.22.4, khronos_api@3.1.0, libc@0.2.189, litrs@1.0.0, mach2@0.5.0, miniz_oxide@0.8.9, miniz_oxide@0.9.1, naga-types@30.0.1, naga@30.0.1, ndk-context@0.1.1, ndk-sys@0.6.0+11769913, ndk@0.9.0, num_enum@0.7.6, num_enum_derive@0.7.6, objc2-audio-toolbox@0.3.2, objc2-avf-audio@0.3.2, objc2-core-audio-types@0.3.2, objc2-core-audio@0.3.2, objc2-core-foundation@0.3.2, objc2-core-graphics@0.3.2, objc2-game-controller@0.3.2, objc2-io-kit@0.3.2, objc2-metal@0.3.2, objc2-quartz-core@0.3.2, pin-project-internal@1.1.13, pin-project-lite@0.2.17, pin-project@1.1.13, portable-atomic-util@0.2.7, portable-atomic@1.14.0, proc-macro2@1.0.107, profiling@1.0.18, quote@1.0.47, r-efi@5.3.0, r-efi@6.0.0, rand@0.9.5, rand_chacha@0.9.0, range-alloc@0.1.5, raw-window-handle@0.6.2, rodio@0.22.2, rustversion@1.0.23, semver@1.0.28, serde@1.0.229, serde_core@1.0.229, serde_derive@1.0.229, serde_json@1.0.151, shlex@2.0.1, simdutf8@0.1.5, spirv@0.4.0+sdk-1.4.341.0, syn@2.0.119, syn@3.0.3, thiserror-impl@1.0.69, thiserror-impl@2.0.20, thiserror@1.0.69, thiserror@2.0.20, unicode-ident@1.0.24, wgpu-core-deps-apple@30.0.1, wgpu-core-deps-emscripten@30.0.1, wgpu-core-deps-windows-linux-android@30.0.1, wgpu-core@30.0.1, wgpu-hal@30.0.1, wgpu-naga-bridge@30.0.1, wgpu-types@30.0.1, wgpu@30.0.1
 
 Apache License
 Version 2.0, January 2004
@@ -6736,12 +6774,98 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+--- Applies to: encoding_rs@0.8.44
+
+// Copyright © WHATWG (Apple, Google, Mozilla, Microsoft).
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
+//
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+/// The PUA code points special-cased in the GB18030 encoder.
+pub(crate) static GB18030_2022_OVERRIDE_PUA: [u16; 18] = [
+    0xE78D, 0xE78E, 0xE78F, 0xE790, 0xE791, 0xE792, 0xE793, 0xE794, 0xE795, 0xE796, 0xE81E, 0xE826,
+    0xE82B, 0xE82C, 0xE832, 0xE843, 0xE854, 0xE864,
+];
+
+/// The bytes corresponding to the PUA code points special-cased in the GB18030 encoder.
+pub(crate) static GB18030_2022_OVERRIDE_BYTES: [[u8; 2]; 18] = [
+    [0xA6, 0xD9],
+    [0xA6, 0xDA],
+    [0xA6, 0xDB],
+    [0xA6, 0xDC],
+    [0xA6, 0xDD],
+    [0xA6, 0xDE],
+    [0xA6, 0xDF],
+    [0xA6, 0xEC],
+    [0xA6, 0xED],
+    [0xA6, 0xF3],
+    [0xFE, 0x59],
+    [0xFE, 0x61],
+    [0xFE, 0x66],
+    [0xFE, 0x67],
+    [0xFE, 0x6D],
+    [0xFE, 0x7E],
+    [0xFE, 0x90],
+    [0xFE, 0xA0],
+];
+
 --- Applies to: pp-rs@0.2.1
 
 BSD 3-Clause License
 
 Copyright (c) 2020, Corentin Wallez
 All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+--- Applies to: encoding_rs@0.8.44
+
+Copyright © WHATWG (Apple, Google, Mozilla, Microsoft).
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -8251,6 +8375,28 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+--- Applies to: extended@0.1.0
+
+Copyright 2022 Dietrich Epp
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 --- Applies to: wayland-protocols@0.32.13
 
 Copyright © 2008-2013 Kristian Høgsberg
@@ -8286,6 +8432,30 @@ DEALINGS IN THE SOFTWARE.
 The above is the version of the MIT "Expat" License used by X.org:
 
     http://cgit.freedesktop.org/xorg/xserver/tree/COPYING
+
+--- Applies to: alsa-sys@0.4.0
+
+MIT License
+
+Copyright (c) 2018 diwic
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 --- Applies to: cfg_aliases@0.2.2
 
@@ -9269,6 +9439,431 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
+--- Applies to: cesu8@1.1.0
+
+Short version for non-lawyers:
+
+The Rust Project is dual-licensed under Apache 2.0 and MIT
+terms.
+
+
+Longer version:
+
+The Rust Project is copyright 2014, The Rust Project
+Developers (given in the file AUTHORS.txt).
+
+Licensed under the Apache License, Version 2.0
+<LICENSE-APACHE or
+http://www.apache.org/licenses/LICENSE-2.0> or the MIT
+license <LICENSE-MIT or http://opensource.org/licenses/MIT>,
+at your option. All files in the project carrying such
+notice may not be copied, modified, or distributed except
+according to those terms.
+
+
+The Rust Project includes packages written by third parties.
+The following third party packages are included, and carry
+their own copyright notices and license terms:
+
+* Two header files that are part of the Valgrind
+  package. These files are found at src/rt/vg/valgrind.h and
+  src/rt/vg/memcheck.h, within this distribution. These files
+  are redistributed under the following terms, as noted in
+  them:
+
+  for src/rt/vg/valgrind.h:
+
+    This file is part of Valgrind, a dynamic binary
+    instrumentation framework.
+
+    Copyright (C) 2000-2010 Julian Seward.  All rights
+    reserved.
+
+    Redistribution and use in source and binary forms, with
+    or without modification, are permitted provided that the
+    following conditions are met:
+
+    1. Redistributions of source code must retain the above
+       copyright notice, this list of conditions and the
+       following disclaimer.
+
+    2. The origin of this software must not be
+       misrepresented; you must not claim that you wrote the
+       original software.  If you use this software in a
+       product, an acknowledgment in the product
+       documentation would be appreciated but is not
+       required.
+
+    3. Altered source versions must be plainly marked as
+       such, and must not be misrepresented as being the
+       original software.
+
+    4. The name of the author may not be used to endorse or
+       promote products derived from this software without
+       specific prior written permission.
+
+    THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND
+    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
+    AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN
+    NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
+    INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+    CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+    PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF
+    USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+    CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+    CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+    NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+    USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
+    OF SUCH DAMAGE.
+
+  for src/rt/vg/memcheck.h:
+
+    This file is part of MemCheck, a heavyweight Valgrind
+    tool for detecting memory errors.
+
+    Copyright (C) 2000-2010 Julian Seward.  All rights
+    reserved.
+
+    Redistribution and use in source and binary forms, with
+    or without modification, are permitted provided that the
+    following conditions are met:
+
+    1. Redistributions of source code must retain the above
+       copyright notice, this list of conditions and the
+       following disclaimer.
+
+    2. The origin of this software must not be
+       misrepresented; you must not claim that you wrote the
+       original software.  If you use this software in a
+       product, an acknowledgment in the product
+       documentation would be appreciated but is not
+       required.
+
+    3. Altered source versions must be plainly marked as
+       such, and must not be misrepresented as being the
+       original software.
+
+    4. The name of the author may not be used to endorse or
+       promote products derived from this software without
+       specific prior written permission.
+
+    THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND
+    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
+    AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN
+    NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
+    INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+    CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+    PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF
+    USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+    CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+    CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+    NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+    USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
+    OF SUCH DAMAGE.
+
+* The auxiliary file src/etc/pkg/modpath.iss contains a
+  library routine compiled, by Inno Setup, into the Windows
+  installer binary. This file is licensed under the LGPL,
+  version 3, but, in our legal interpretation, this does not
+  affect the aggregate "collected work" license of the Rust
+  distribution (MIT/ASL2) nor any other components of it. We
+  believe that the terms governing distribution of the
+  binary Windows installer built from modpath.iss are
+  therefore LGPL, but not the terms governing distribution
+  of any of the files installed by such an installer (such
+  as the Rust compiler or runtime libraries themselves).
+
+* The src/rt/miniz.c file, carrying an implementation of
+  RFC1950/RFC1951 DEFLATE, by Rich Geldreich
+  <richgel99@gmail.com>. All uses of this file are
+  permitted by the embedded "unlicense" notice
+  (effectively: public domain with warranty disclaimer).
+
+* LLVM. Code for this package is found in src/llvm.
+
+    Copyright (c) 2003-2013 University of Illinois at
+    Urbana-Champaign.  All rights reserved.
+
+    Developed by:
+
+        LLVM Team
+
+        University of Illinois at Urbana-Champaign
+
+        http://llvm.org
+
+    Permission is hereby granted, free of charge, to any
+    person obtaining a copy of this software and associated
+    documentation files (the "Software"), to deal with the
+    Software without restriction, including without
+    limitation the rights to use, copy, modify, merge,
+    publish, distribute, sublicense, and/or sell copies of
+    the Software, and to permit persons to whom the Software
+    is furnished to do so, subject to the following
+    conditions:
+
+        * Redistributions of source code must retain the
+          above copyright notice, this list of conditions
+          and the following disclaimers.
+
+        * Redistributions in binary form must reproduce the
+          above copyright notice, this list of conditions
+          and the following disclaimers in the documentation
+          and/or other materials provided with the
+          distribution.
+
+        * Neither the names of the LLVM Team, University of
+          Illinois at Urbana-Champaign, nor the names of its
+          contributors may be used to endorse or promote
+          products derived from this Software without
+          specific prior written permission.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+    ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+    TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+    PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT
+    SHALL THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE
+    FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+    ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
+    OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+    OTHER DEALINGS WITH THE SOFTWARE.
+
+* Additional libraries included in LLVM carry separate
+  BSD-compatible licenses. See src/llvm/LICENSE.txt for
+  details.
+
+* compiler-rt, in src/compiler-rt is dual licensed under
+  LLVM's license and MIT:
+
+    Copyright (c) 2009-2014 by the contributors listed in
+    CREDITS.TXT
+
+    All rights reserved.
+
+    Developed by:
+
+        LLVM Team
+
+        University of Illinois at Urbana-Champaign
+
+        http://llvm.org
+
+    Permission is hereby granted, free of charge, to any
+    person obtaining a copy of this software and associated
+    documentation files (the "Software"), to deal with the
+    Software without restriction, including without
+    limitation the rights to use, copy, modify, merge,
+    publish, distribute, sublicense, and/or sell copies of
+    the Software, and to permit persons to whom the Software
+    is furnished to do so, subject to the following
+    conditions:
+
+        * Redistributions of source code must retain the
+          above copyright notice, this list of conditions
+          and the following disclaimers.
+
+        * Redistributions in binary form must reproduce the
+          above copyright notice, this list of conditions
+          and the following disclaimers in the documentation
+          and/or other materials provided with the
+          distribution.
+
+        * Neither the names of the LLVM Team, University of
+          Illinois at Urbana-Champaign, nor the names of its
+          contributors may be used to endorse or promote
+          products derived from this Software without
+          specific prior written permission.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+    ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+    TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+    PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT
+    SHALL THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE
+    FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+    ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
+    OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+    OTHER DEALINGS WITH THE SOFTWARE.
+
+    ========================================================
+
+    Copyright (c) 2009-2014 by the contributors listed in
+    CREDITS.TXT
+
+    Permission is hereby granted, free of charge, to any
+    person obtaining a copy of this software and associated
+    documentation files (the "Software"), to deal in the
+    Software without restriction, including without
+    limitation the rights to use, copy, modify, merge,
+    publish, distribute, sublicense, and/or sell copies of
+    the Software, and to permit persons to whom the Software
+    is furnished to do so, subject to the following
+    conditions:
+
+    The above copyright notice and this permission notice
+    shall be included in all copies or substantial portions
+    of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+    ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+    TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+    PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+    SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+    OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+    IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+
+* Portions of the FFI code for interacting with the native ABI
+  is derived from the Clay programming language, which carries
+  the following license.
+
+    Copyright (C) 2008-2010 Tachyon Technologies.
+    All rights reserved.
+
+    Redistribution and use in source and binary forms, with
+    or without modification, are permitted provided that the
+    following conditions are met:
+
+    1. Redistributions of source code must retain the above
+       copyright notice, this list of conditions and the
+       following disclaimer.
+
+    2. Redistributions in binary form must reproduce the
+       above copyright notice, this list of conditions and
+       the following disclaimer in the documentation and/or
+       other materials provided with the distribution.
+
+    THIS SOFTWARE IS PROVIDED ``AS IS'' AND ANY EXPRESS OR
+    IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+    IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+    PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+    DEVELOPERS AND CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+    INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+    CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+    PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF
+    USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+    CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+    CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+    NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+    USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
+    OF SUCH DAMAGE.
+
+* Hoedown, the markdown parser, under src/rt/hoedown, is
+  licensed as follows.
+
+    Copyright (c) 2008, Natacha Porté
+    Copyright (c) 2011, Vicent Martí
+    Copyright (c) 2013, Devin Torres and the Hoedown authors
+
+    Permission to use, copy, modify, and distribute this
+    software for any purpose with or without fee is hereby
+    granted, provided that the above copyright notice and
+    this permission notice appear in all copies.
+
+    THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR
+    DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE
+    INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+    FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+    SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR
+    ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA
+    OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE
+    OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+    CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+* libbacktrace, under src/libbacktrace:
+
+    Copyright (C) 2012-2014 Free Software Foundation, Inc.
+    Written by Ian Lance Taylor, Google.
+
+    Redistribution and use in source and binary forms, with
+    or without modification, are permitted provided that the
+    following conditions are met:
+
+        (1) Redistributions of source code must retain the
+        above copyright notice, this list of conditions and
+        the following disclaimer.
+
+        (2) Redistributions in binary form must reproduce
+        the above copyright notice, this list of conditions
+        and the following disclaimer in the documentation
+        and/or other materials provided with the
+        distribution.
+
+        (3) The name of the author may not be used to
+        endorse or promote products derived from this
+        software without specific prior written permission.
+
+    THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND
+    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
+    AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
+    NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
+    INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+    CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+    PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF
+    USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+    CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+    CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+    NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+    USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
+    OF SUCH DAMAGE.  */
+
+* jemalloc, under src/jemalloc:
+
+    Copyright (C) 2002-2014 Jason Evans
+    <jasone@canonware.com>. All rights reserved.
+    Copyright (C) 2007-2012 Mozilla Foundation.
+    All rights reserved.
+    Copyright (C) 2009-2014 Facebook, Inc.
+    All rights reserved.
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions are met:
+    1. Redistributions of source code must retain the above copyright notice(s),
+       this list of conditions and the following disclaimer.
+    2. Redistributions in binary form must reproduce the above copyright notice(s),
+       this list of conditions and the following disclaimer in the documentation
+       and/or other materials provided with the distribution.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDER(S)
+    ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES,
+    INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+    MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+    DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT HOLDER(S)
+    BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+    EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+    LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+    HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+    IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+    NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+    USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
+    OF SUCH DAMAGE.
+
+* Additional copyright may be retained by contributors other
+  than Mozilla, the Rust Project Developers, or the parties
+  enumerated in this file. Such copyright can be determined
+  on a case-by-case basis by examining the author of each
+  portion of a file in the revision-control commit records
+  of the project, or by consulting representative comments
+  claiming copyright ownership for a file.
+
+  For example, the text:
+
+      "Copyright (c) 2011 Google Inc."
+
+  appears in some files, and these files thereby denote
+  that their author and copyright-holder is Google Inc.
+
+  In all such cases, the absence of explicit licensing text
+  indicates that the contributor chose to license their work
+  for distribution under identical terms to those Mozilla
+  has chosen for the collective work, enumerated at the top
+  of this file. The only difference is the retention of
+  copyright itself, held by the contributor.
+
 --- Applies to: core-graphics@0.23.2
 
 Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
@@ -9276,6 +9871,26 @@ http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
 <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 option. All files in the project carrying such notice may not be
 copied, modified, or distributed except according to those terms.
+
+--- Applies to: encoding_rs@0.8.44
+
+encoding_rs is copyright Mozilla Foundation.
+
+Licensed under the Apache License, Version 2.0
+<LICENSE-APACHE or
+https://www.apache.org/licenses/LICENSE-2.0> or the MIT
+license <LICENSE-MIT or https://opensource.org/licenses/MIT>,
+at your option. All files in the project carrying such
+notice may not be copied, modified, or distributed except
+according to those terms.
+
+This crate includes data derived from the data files supplied
+with the WHATWG Encoding Standard, which, when incorporated into
+source code, are licensed under the BSD 3-Clause License
+<LICENSE-WHATWG>.
+
+Test code within encoding_rs is dedicated to the Public Domain when so
+designated (see the individual files for PD/CC0-dedicated sections).
 
 --- Applies to: linux-raw-sys@0.12.1, linux-raw-sys@0.4.15
 
@@ -9308,6 +9923,24 @@ is licensed under:
    <http://opensource.org/licenses/MIT>,
 
 at your option.
+
+--- Applies to: multiversion_no_op@1.0.0
+
+Copyright Mozilla Foundation
+
+Licensed under the Apache License (Version 2.0), or the MIT license,
+(the "Licenses") at your option. You may not use this file except in
+compliance with one of the Licenses. You may obtain copies of the
+Licenses at:
+
+   https://www.apache.org/licenses/LICENSE-2.0
+   https://opensource.org/licenses/MIT
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the Licenses is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the Licenses for the specific language governing permissions and
+limitations under the Licenses.
 
 --- Applies to: rand@0.9.5, rand_chacha@0.9.0, rand_core@0.9.5
 
@@ -12404,3 +13037,382 @@ Copyright (C) 2011 by Morten S. Mikkelsen
 //! > 2. Altered source versions must be plainly marked as such, and must not be
 //! >    misrepresented as being the original software.
 //! > 3. This notice may not be removed or altered from any source distribution.
+
+--- Applies to: symphonia-bundle-mp3@0.5.5, symphonia-codec-pcm@0.5.5, symphonia-core@0.5.5, symphonia-format-riff@0.5.5, symphonia-metadata@0.5.5, symphonia@0.5.5
+
+Symphonia 0.5.5 published crates omit the workspace LICENSE file; retain its MPL-2.0 licence text from the matching upstream revision.
+Source: https://raw.githubusercontent.com/pdeljanov/Symphonia/6d533f26150953a882a6a111ebd13f0abf7129d5/LICENSE
+
+Mozilla Public License Version 2.0
+==================================
+
+1. Definitions
+--------------
+
+1.1. "Contributor"
+    means each individual or legal entity that creates, contributes to
+    the creation of, or owns Covered Software.
+
+1.2. "Contributor Version"
+    means the combination of the Contributions of others (if any) used
+    by a Contributor and that particular Contributor's Contribution.
+
+1.3. "Contribution"
+    means Covered Software of a particular Contributor.
+
+1.4. "Covered Software"
+    means Source Code Form to which the initial Contributor has attached
+    the notice in Exhibit A, the Executable Form of such Source Code
+    Form, and Modifications of such Source Code Form, in each case
+    including portions thereof.
+
+1.5. "Incompatible With Secondary Licenses"
+    means
+
+    (a) that the initial Contributor has attached the notice described
+        in Exhibit B to the Covered Software; or
+
+    (b) that the Covered Software was made available under the terms of
+        version 1.1 or earlier of the License, but not also under the
+        terms of a Secondary License.
+
+1.6. "Executable Form"
+    means any form of the work other than Source Code Form.
+
+1.7. "Larger Work"
+    means a work that combines Covered Software with other material, in
+    a separate file or files, that is not Covered Software.
+
+1.8. "License"
+    means this document.
+
+1.9. "Licensable"
+    means having the right to grant, to the maximum extent possible,
+    whether at the time of the initial grant or subsequently, any and
+    all of the rights conveyed by this License.
+
+1.10. "Modifications"
+    means any of the following:
+
+    (a) any file in Source Code Form that results from an addition to,
+        deletion from, or modification of the contents of Covered
+        Software; or
+
+    (b) any new file in Source Code Form that contains any Covered
+        Software.
+
+1.11. "Patent Claims" of a Contributor
+    means any patent claim(s), including without limitation, method,
+    process, and apparatus claims, in any patent Licensable by such
+    Contributor that would be infringed, but for the grant of the
+    License, by the making, using, selling, offering for sale, having
+    made, import, or transfer of either its Contributions or its
+    Contributor Version.
+
+1.12. "Secondary License"
+    means either the GNU General Public License, Version 2.0, the GNU
+    Lesser General Public License, Version 2.1, the GNU Affero General
+    Public License, Version 3.0, or any later versions of those
+    licenses.
+
+1.13. "Source Code Form"
+    means the form of the work preferred for making modifications.
+
+1.14. "You" (or "Your")
+    means an individual or a legal entity exercising rights under this
+    License. For legal entities, "You" includes any entity that
+    controls, is controlled by, or is under common control with You. For
+    purposes of this definition, "control" means (a) the power, direct
+    or indirect, to cause the direction or management of such entity,
+    whether by contract or otherwise, or (b) ownership of more than
+    fifty percent (50%) of the outstanding shares or beneficial
+    ownership of such entity.
+
+2. License Grants and Conditions
+--------------------------------
+
+2.1. Grants
+
+Each Contributor hereby grants You a world-wide, royalty-free,
+non-exclusive license:
+
+(a) under intellectual property rights (other than patent or trademark)
+    Licensable by such Contributor to use, reproduce, make available,
+    modify, display, perform, distribute, and otherwise exploit its
+    Contributions, either on an unmodified basis, with Modifications, or
+    as part of a Larger Work; and
+
+(b) under Patent Claims of such Contributor to make, use, sell, offer
+    for sale, have made, import, and otherwise transfer either its
+    Contributions or its Contributor Version.
+
+2.2. Effective Date
+
+The licenses granted in Section 2.1 with respect to any Contribution
+become effective for each Contribution on the date the Contributor first
+distributes such Contribution.
+
+2.3. Limitations on Grant Scope
+
+The licenses granted in this Section 2 are the only rights granted under
+this License. No additional rights or licenses will be implied from the
+distribution or licensing of Covered Software under this License.
+Notwithstanding Section 2.1(b) above, no patent license is granted by a
+Contributor:
+
+(a) for any code that a Contributor has removed from Covered Software;
+    or
+
+(b) for infringements caused by: (i) Your and any other third party's
+    modifications of Covered Software, or (ii) the combination of its
+    Contributions with other software (except as part of its Contributor
+    Version); or
+
+(c) under Patent Claims infringed by Covered Software in the absence of
+    its Contributions.
+
+This License does not grant any rights in the trademarks, service marks,
+or logos of any Contributor (except as may be necessary to comply with
+the notice requirements in Section 3.4).
+
+2.4. Subsequent Licenses
+
+No Contributor makes additional grants as a result of Your choice to
+distribute the Covered Software under a subsequent version of this
+License (see Section 10.2) or under the terms of a Secondary License (if
+permitted under the terms of Section 3.3).
+
+2.5. Representation
+
+Each Contributor represents that the Contributor believes its
+Contributions are its original creation(s) or it has sufficient rights
+to grant the rights to its Contributions conveyed by this License.
+
+2.6. Fair Use
+
+This License is not intended to limit any rights You have under
+applicable copyright doctrines of fair use, fair dealing, or other
+equivalents.
+
+2.7. Conditions
+
+Sections 3.1, 3.2, 3.3, and 3.4 are conditions of the licenses granted
+in Section 2.1.
+
+3. Responsibilities
+-------------------
+
+3.1. Distribution of Source Form
+
+All distribution of Covered Software in Source Code Form, including any
+Modifications that You create or to which You contribute, must be under
+the terms of this License. You must inform recipients that the Source
+Code Form of the Covered Software is governed by the terms of this
+License, and how they can obtain a copy of this License. You may not
+attempt to alter or restrict the recipients' rights in the Source Code
+Form.
+
+3.2. Distribution of Executable Form
+
+If You distribute Covered Software in Executable Form then:
+
+(a) such Covered Software must also be made available in Source Code
+    Form, as described in Section 3.1, and You must inform recipients of
+    the Executable Form how they can obtain a copy of such Source Code
+    Form by reasonable means in a timely manner, at a charge no more
+    than the cost of distribution to the recipient; and
+
+(b) You may distribute such Executable Form under the terms of this
+    License, or sublicense it under different terms, provided that the
+    license for the Executable Form does not attempt to limit or alter
+    the recipients' rights in the Source Code Form under this License.
+
+3.3. Distribution of a Larger Work
+
+You may create and distribute a Larger Work under terms of Your choice,
+provided that You also comply with the requirements of this License for
+the Covered Software. If the Larger Work is a combination of Covered
+Software with a work governed by one or more Secondary Licenses, and the
+Covered Software is not Incompatible With Secondary Licenses, this
+License permits You to additionally distribute such Covered Software
+under the terms of such Secondary License(s), so that the recipient of
+the Larger Work may, at their option, further distribute the Covered
+Software under the terms of either this License or such Secondary
+License(s).
+
+3.4. Notices
+
+You may not remove or alter the substance of any license notices
+(including copyright notices, patent notices, disclaimers of warranty,
+or limitations of liability) contained within the Source Code Form of
+the Covered Software, except that You may alter any license notices to
+the extent required to remedy known factual inaccuracies.
+
+3.5. Application of Additional Terms
+
+You may choose to offer, and to charge a fee for, warranty, support,
+indemnity or liability obligations to one or more recipients of Covered
+Software. However, You may do so only on Your own behalf, and not on
+behalf of any Contributor. You must make it absolutely clear that any
+such warranty, support, indemnity, or liability obligation is offered by
+You alone, and You hereby agree to indemnify every Contributor for any
+liability incurred by such Contributor as a result of warranty, support,
+indemnity or liability terms You offer. You may include additional
+disclaimers of warranty and limitations of liability specific to any
+jurisdiction.
+
+4. Inability to Comply Due to Statute or Regulation
+---------------------------------------------------
+
+If it is impossible for You to comply with any of the terms of this
+License with respect to some or all of the Covered Software due to
+statute, judicial order, or regulation then You must: (a) comply with
+the terms of this License to the maximum extent possible; and (b)
+describe the limitations and the code they affect. Such description must
+be placed in a text file included with all distributions of the Covered
+Software under this License. Except to the extent prohibited by statute
+or regulation, such description must be sufficiently detailed for a
+recipient of ordinary skill to be able to understand it.
+
+5. Termination
+--------------
+
+5.1. The rights granted under this License will terminate automatically
+if You fail to comply with any of its terms. However, if You become
+compliant, then the rights granted under this License from a particular
+Contributor are reinstated (a) provisionally, unless and until such
+Contributor explicitly and finally terminates Your grants, and (b) on an
+ongoing basis, if such Contributor fails to notify You of the
+non-compliance by some reasonable means prior to 60 days after You have
+come back into compliance. Moreover, Your grants from a particular
+Contributor are reinstated on an ongoing basis if such Contributor
+notifies You of the non-compliance by some reasonable means, this is the
+first time You have received notice of non-compliance with this License
+from such Contributor, and You become compliant prior to 30 days after
+Your receipt of the notice.
+
+5.2. If You initiate litigation against any entity by asserting a patent
+infringement claim (excluding declaratory judgment actions,
+counter-claims, and cross-claims) alleging that a Contributor Version
+directly or indirectly infringes any patent, then the rights granted to
+You by any and all Contributors for the Covered Software under Section
+2.1 of this License shall terminate.
+
+5.3. In the event of termination under Sections 5.1 or 5.2 above, all
+end user license agreements (excluding distributors and resellers) which
+have been validly granted by You or Your distributors under this License
+prior to termination shall survive termination.
+
+************************************************************************
+*                                                                      *
+*  6. Disclaimer of Warranty                                           *
+*  -------------------------                                           *
+*                                                                      *
+*  Covered Software is provided under this License on an "as is"       *
+*  basis, without warranty of any kind, either expressed, implied, or  *
+*  statutory, including, without limitation, warranties that the       *
+*  Covered Software is free of defects, merchantable, fit for a        *
+*  particular purpose or non-infringing. The entire risk as to the     *
+*  quality and performance of the Covered Software is with You.        *
+*  Should any Covered Software prove defective in any respect, You     *
+*  (not any Contributor) assume the cost of any necessary servicing,   *
+*  repair, or correction. This disclaimer of warranty constitutes an   *
+*  essential part of this License. No use of any Covered Software is   *
+*  authorized under this License except under this disclaimer.         *
+*                                                                      *
+************************************************************************
+
+************************************************************************
+*                                                                      *
+*  7. Limitation of Liability                                          *
+*  --------------------------                                          *
+*                                                                      *
+*  Under no circumstances and under no legal theory, whether tort      *
+*  (including negligence), contract, or otherwise, shall any           *
+*  Contributor, or anyone who distributes Covered Software as          *
+*  permitted above, be liable to You for any direct, indirect,         *
+*  special, incidental, or consequential damages of any character      *
+*  including, without limitation, damages for lost profits, loss of    *
+*  goodwill, work stoppage, computer failure or malfunction, or any    *
+*  and all other commercial damages or losses, even if such party      *
+*  shall have been informed of the possibility of such damages. This   *
+*  limitation of liability shall not apply to liability for death or   *
+*  personal injury resulting from such party's negligence to the       *
+*  extent applicable law prohibits such limitation. Some               *
+*  jurisdictions do not allow the exclusion or limitation of           *
+*  incidental or consequential damages, so this exclusion and          *
+*  limitation may not apply to You.                                    *
+*                                                                      *
+************************************************************************
+
+8. Litigation
+-------------
+
+Any litigation relating to this License may be brought only in the
+courts of a jurisdiction where the defendant maintains its principal
+place of business and such litigation shall be governed by laws of that
+jurisdiction, without reference to its conflict-of-law provisions.
+Nothing in this Section shall prevent a party's ability to bring
+cross-claims or counter-claims.
+
+9. Miscellaneous
+----------------
+
+This License represents the complete agreement concerning the subject
+matter hereof. If any provision of this License is held to be
+unenforceable, such provision shall be reformed only to the extent
+necessary to make it enforceable. Any law or regulation which provides
+that the language of a contract shall be construed against the drafter
+shall not be used to construe this License against a Contributor.
+
+10. Versions of the License
+---------------------------
+
+10.1. New Versions
+
+Mozilla Foundation is the license steward. Except as provided in Section
+10.3, no one other than the license steward has the right to modify or
+publish new versions of this License. Each version will be given a
+distinguishing version number.
+
+10.2. Effect of New Versions
+
+You may distribute the Covered Software under the terms of the version
+of the License under which You originally received the Covered Software,
+or under the terms of any subsequent version published by the license
+steward.
+
+10.3. Modified Versions
+
+If you create software not governed by this License, and you want to
+create a new license for such software, you may create and use a
+modified version of this License if you rename the license and remove
+any references to the name of the license steward (except to note that
+such modified license differs from this License).
+
+10.4. Distributing Source Code Form that is Incompatible With Secondary
+Licenses
+
+If You choose to distribute Source Code Form that is Incompatible With
+Secondary Licenses under the terms of this version of the License, the
+notice described in Exhibit B of this License must be attached.
+
+Exhibit A - Source Code Form License Notice
+-------------------------------------------
+
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+If it is not possible or desirable to put the notice in a particular
+file, then You may include the notice in a location (such as a LICENSE
+file in a relevant directory) where a recipient would be likely to look
+for such a notice.
+
+You may add additional accurate notices of copyright ownership.
+
+Exhibit B - "Incompatible With Secondary Licenses" Notice
+---------------------------------------------------------
+
+  This Source Code Form is "Incompatible With Secondary Licenses", as
+  defined by the Mozilla Public License, v. 2.0.

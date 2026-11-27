@@ -70,11 +70,7 @@ impl SpatialMix {
     /// Unity per-channel centered mix for non-positional 2D audio (`left == right == gain`).
     #[must_use]
     pub fn centered(gain: f32) -> Self {
-        let gain = if gain.is_finite() {
-            gain.max(0.0)
-        } else {
-            0.0
-        };
+        let gain = if gain.is_finite() { gain.max(0.0) } else { 0.0 };
         if gain == 0.0 {
             return Self::SILENT;
         }
@@ -93,11 +89,7 @@ impl SpatialMix {
     /// so `left_gain^2 + right_gain^2 == gain^2` across the full pan range.
     #[must_use]
     pub(crate) fn from_gain_pan(gain: f32, pan: f32) -> Self {
-        let gain = if gain.is_finite() {
-            gain.max(0.0)
-        } else {
-            0.0
-        };
+        let gain = if gain.is_finite() { gain.max(0.0) } else { 0.0 };
         if gain == 0.0 {
             return Self::SILENT;
         }

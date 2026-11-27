@@ -238,13 +238,15 @@ impl Programs {
             .zip(blended)
             .zip(additive)
             .zip(footprint)
-            .map(move |((((depth, masked), blended), additive), footprint)| Self {
-                depth,
-                masked,
-                blended,
-                additive,
-                footprint,
-            })
+            .map(
+                move |((((depth, masked), blended), additive), footprint)| Self {
+                    depth,
+                    masked,
+                    blended,
+                    additive,
+                    footprint,
+                },
+            )
     }
 }
 

@@ -57,9 +57,9 @@ library boundary to its governing contract.
 - **2D and UI:** sprite batches, logical canvases, texture atlases, Aseprite
   sheets, glyph rendering, lighting, overlays, and immediate-mode widgets for
   game HUDs, menus, and tools.
-- **Simulation and input:** fixed-step timing, deterministic hashing and RNG,
-  grids, frame animation, kinematic physics for box bodies in 2D and 3D, and
-  controller events/state.
+- **Simulation, audio, and input:** fixed-step timing, deterministic hashing and RNG,
+  grids, frame animation, kinematic physics for box bodies in 2D and 3D,
+  3D spatialized audio playback, and controller events/state.
 - **Networking:** reliable-ordered and latest-state delivery over UDP,
   WebSocket, or in-memory transports; simulated networks for repeatable tests.
 - **Agent-oriented development:** explicit ownership and lifecycle contracts,
@@ -78,6 +78,7 @@ and rendering settings.
 | [sgl-net](crates/sgl-net/README.md) | Opaque-payload UDP, WebSocket, memory, and simulated transports |
 | [sgl-input](crates/sgl-input/README.md) | Controller discovery, events, and held state |
 | [sgl-2d](crates/sgl-2d/README.md) | Sprite and logical-canvas rendering, assets, text, lighting, and immediate UI; also HUDs over 3D |
+| [sgl-audio](crates/sgl-audio/README.md) | Deterministic 3D spatialization and safe stereo-panned audio playback |
 | [sgl-3d](crates/sgl-3d/docs/README.md) | PBR scenes, glTF assets, lighting, shadows, reflections, post-processing, and GPU diagnostics |
 | [sgl-post-fx](crates/sgl-post-fx/README.md) | GPU post-processing effects used by SGL3D, derived from DiligentFX |
 | [sgl-webgpu](crates/sgl-webgpu/README.md) | The browser's WebGPU backend for wgpu: a browser game creates its wgpu instance from it |

@@ -243,12 +243,7 @@ impl AudioEngine {
     ///
     /// Returns `true` if the clip was found (and decoded on native playback),
     /// or `false` if the clip is missing or could not be decoded.
-    pub fn play_oneshot(
-        &mut self,
-        clip: &str,
-        volume: f32,
-        spatial: Option<(Vec3, f32)>,
-    ) -> bool {
+    pub fn play_oneshot(&mut self, clip: &str, volume: f32, spatial: Option<(Vec3, f32)>) -> bool {
         let Some(entry) = self.clips.get(clip) else {
             return false;
         };
@@ -394,11 +389,9 @@ impl AudioEngine {
             };
 
             if needs_start {
-                if emitter
-                    .failed_decode
-                    .as_ref()
-                    .is_some_and(|(clip, rev)| *clip == emitter.state.clip && *rev == clip_entry.revision)
-                {
+                if emitter.failed_decode.as_ref().is_some_and(|(clip, rev)| {
+                    *clip == emitter.state.clip && *rev == clip_entry.revision
+                }) {
                     return;
                 }
                 if let Ok(decoder) = Decoder::new(Cursor::new(Arc::clone(&clip_entry.bytes))) {

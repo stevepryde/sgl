@@ -534,7 +534,11 @@ impl Scene {
             .iter()
             .filter_map(|(inst_id, inst)| {
                 (inst.state.model == id)
-                    .then_some(inst.material_override.as_ref().map(|ov| (inst_id, ov.override_)))
+                    .then_some(
+                        inst.material_override
+                            .as_ref()
+                            .map(|ov| (inst_id, ov.override_)),
+                    )
                     .flatten()
             })
             .collect();
