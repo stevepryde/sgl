@@ -53,20 +53,20 @@ default-members = [
 edition = "2024"
 license = "MIT OR Apache-2.0"
 publish = ["crates-io"]
-version = "0.12.1"
+version = "0.13.0"
 rust-version = "1.96"
 repository = "https://github.com/stevepryde/sgl"
 
 [workspace.dependencies]
-sgl-2d = { version = "0.12.1", path = "crates/sgl-2d" }
-sgl-audio = { version = "0.12.1", path = "crates/sgl-audio" }
-sgl-input = { version = "0.12.1", path = "crates/sgl-input" }
-sgl-3d = { version = "0.12.1", path = "crates/sgl-3d" }
-sgl-post-fx = { version = "0.12.1", path = "crates/sgl-post-fx" }
-sgl-core = { version = "0.12.1", path = "crates/sgl-core" }
-sgl-physics = { version = "0.12.1", path = "crates/sgl-physics" }
-sgl-net = { version = "0.12.1", path = "crates/sgl-net", default-features = false }
-sgl-webgpu = { version = "0.12.1", path = "crates/sgl-webgpu" }
+sgl-2d = { version = "0.13.0", path = "crates/sgl-2d" }
+sgl-audio = { version = "0.13.0", path = "crates/sgl-audio" }
+sgl-input = { version = "0.13.0", path = "crates/sgl-input" }
+sgl-3d = { version = "0.13.0", path = "crates/sgl-3d" }
+sgl-post-fx = { version = "0.13.0", path = "crates/sgl-post-fx" }
+sgl-core = { version = "0.13.0", path = "crates/sgl-core" }
+sgl-physics = { version = "0.13.0", path = "crates/sgl-physics" }
+sgl-net = { version = "0.13.0", path = "crates/sgl-net", default-features = false }
+sgl-webgpu = { version = "0.13.0", path = "crates/sgl-webgpu" }
 bcdec_rs = "0.2"
 bevy_mikktspace = { version = "1.0", features = ["corrected-edge-sorting", "corrected-vertex-welding"] }
 blake3 = "1.8.3"

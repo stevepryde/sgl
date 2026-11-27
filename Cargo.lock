@@ -2590,7 +2590,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-2d"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "bytemuck",
  "fontdue",
@@ -2614,7 +2614,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-2d-examples"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "sgl-2d",
  "sgl-core",
@@ -2623,7 +2623,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-2d-tests"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "image",
  "pollster",
@@ -2638,7 +2638,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-3d"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "bcdec_rs",
  "bevy_mikktspace",
@@ -2668,7 +2668,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-3d-examples"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "bcdec_rs",
  "bytemuck",
@@ -2694,7 +2694,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-3d-tests"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "bytemuck",
  "glam",
@@ -2710,7 +2710,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-audio"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "glam",
  "rodio",
@@ -2718,7 +2718,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-core"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "blake3",
  "fastrand",
@@ -2728,7 +2728,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-core-tests"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "blake3",
  "proptest",
@@ -2738,7 +2738,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-direct-game"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "console_error_panic_hook",
  "sgl-2d",
@@ -2749,7 +2749,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-input"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "block2 0.6.2",
  "gilrs",
@@ -2760,7 +2760,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-input-examples"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "sgl-input",
  "winit",
@@ -2768,7 +2768,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-net"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "blake3",
  "getrandom 0.4.3",
@@ -2783,7 +2783,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-net-examples"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "js-sys",
  "sgl-net",
@@ -2794,7 +2794,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-net-tests"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "sgl-net",
  "tungstenite",
@@ -2802,7 +2802,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-physics"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "glam",
  "serde",
@@ -2812,7 +2812,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-physics-examples"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "postcard",
  "serde",
@@ -2825,7 +2825,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-physics-tests"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "parry2d",
  "parry3d",
@@ -2840,7 +2840,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-post-fx"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "bytemuck",
  "pollster",
@@ -2849,7 +2849,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-post-fx-tests"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "bytemuck",
  "pollster",
@@ -2859,7 +2859,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-webgpu"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "js-sys",
  "log",
@@ -2873,7 +2873,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-webgpu-examples"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "console_error_panic_hook",
  "futures-channel",
