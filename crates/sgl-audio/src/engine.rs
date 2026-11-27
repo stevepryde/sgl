@@ -211,7 +211,7 @@ impl AudioEngine {
         if !self.paused
             && let Backend::Web(web) = &self.backend
         {
-            web.resume_if_suspended();
+            web.resume_now();
         }
     }
 
@@ -283,8 +283,6 @@ impl AudioEngine {
 
     /// Pauses or resumes all active playback.
     pub fn set_paused(&mut self, paused: bool) {
-        #[cfg(all(feature = "playback", target_arch = "wasm32"))]
-        let was_paused = self.paused;
         self.paused = paused;
 
         #[cfg(all(feature = "playback", target_arch = "wasm32"))]
@@ -326,11 +324,7 @@ impl AudioEngine {
                         voice.set_mix(mix);
                     }
                 }
-                if was_paused {
-                    web.resume_after_pause();
-                } else {
-                    web.resume_if_suspended();
-                }
+                web.resume_now();
             }
         }
     }
@@ -401,17 +395,19 @@ impl AudioEngine {
         #[cfg(all(feature = "playback", target_arch = "wasm32"))]
         if let Backend::Web(web) = &self.backend {
             let state = match web.lookup_clip(clip, entry.revision) {
-                DecodedClipLookup::Ready(buffer) => {
+                DecodedClipLookup::Ready(buffer) if !self.paused => {
                     let Ok(voice) = WebVoice::start(web.context(), &buffer, false, mix, true)
                     else {
                         return false;
                     };
                     WebOneshotState::Playing(voice)
                 }
-                DecodedClipLookup::Decoding => WebOneshotState::Pending {
-                    clip: clip.to_owned(),
-                    clip_revision: entry.revision,
-                },
+                DecodedClipLookup::Ready(_) | DecodedClipLookup::Decoding => {
+                    WebOneshotState::Pending {
+                        clip: clip.to_owned(),
+                        clip_revision: entry.revision,
+                    }
+                }
                 DecodedClipLookup::Failed | DecodedClipLookup::Missing => return false,
             };
             if !self.paused {
@@ -486,7 +482,7 @@ impl AudioEngine {
             }
             #[cfg(all(feature = "playback", target_arch = "wasm32"))]
             {
-                let _ = (paused, headless);
+                let _ = headless;
                 let Backend::Web(web) = backend else {
                     let _ = mix;
                     return false;
@@ -516,6 +512,7 @@ impl AudioEngine {
                         }
                         match web.lookup_clip(clip, *clip_revision) {
                             DecodedClipLookup::Decoding => true,
+                            DecodedClipLookup::Ready(_) if paused => true,
                             DecodedClipLookup::Ready(buffer) => {
                                 let Ok(voice) =
                                     WebVoice::start(web.context(), &buffer, false, mix, true)
@@ -681,6 +678,9 @@ impl AudioEngine {
 
         if needs_start {
             emitter.web_voice = None;
+            if self.paused {
+                return;
+            }
             match web.lookup_clip(&emitter.state.clip, clip_entry.revision) {
                 DecodedClipLookup::Ready(buffer) => {
                     if let Ok(voice) = WebVoice::start(

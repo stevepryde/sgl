@@ -121,8 +121,8 @@ impl Drop for WebVoice {
 pub(crate) struct WebAudioBackend {
     context: AudioContext,
     decoded_clips: Rc<RefCell<HashMap<String, DecodedClipEntry>>>,
-    resume_in_flight: Rc<Cell<bool>>,
-    suspend_in_flight: Rc<Cell<bool>>,
+    desired_paused: Rc<Cell<bool>>,
+    auto_resume_in_flight: Rc<Cell<bool>>,
 }
 
 impl WebAudioBackend {
@@ -131,8 +131,8 @@ impl WebAudioBackend {
         Ok(Self {
             context,
             decoded_clips: Rc::new(RefCell::new(HashMap::new())),
-            resume_in_flight: Rc::new(Cell::new(false)),
-            suspend_in_flight: Rc::new(Cell::new(false)),
+            desired_paused: Rc::new(Cell::new(false)),
+            auto_resume_in_flight: Rc::new(Cell::new(false)),
         })
     }
 
@@ -140,54 +140,64 @@ impl WebAudioBackend {
         &self.context
     }
 
-    /// Attempts to resume a suspended `AudioContext`, avoiding concurrent calls
-    /// while a resume promise is already in flight.
+    /// Best-effort automatic resume during playback/update, throttled so a
+    /// pre-gesture pending promise does not spam `context.resume()` every tick.
+    /// Never suppresses explicit [`Self::resume_now`] calls.
     pub(crate) fn resume_if_suspended(&self) {
-        if self.context.state() != AudioContextState::Suspended || self.resume_in_flight.get() {
+        if self.desired_paused.get()
+            || self.context.state() != AudioContextState::Suspended
+            || self.auto_resume_in_flight.get()
+        {
             return;
         }
-        self.start_resume();
-    }
-
-    /// Resumes the `AudioContext` after an explicit engine pause, including the
-    /// case where a `suspend()` transition is still in flight.
-    pub(crate) fn resume_after_pause(&self) {
-        if self.context.state() == AudioContextState::Closed || self.resume_in_flight.get() {
-            return;
-        }
-        if self.context.state() == AudioContextState::Suspended || self.suspend_in_flight.get() {
-            self.start_resume();
-        }
-    }
-
-    fn start_resume(&self) {
         let Ok(promise) = self.context.resume() else {
             return;
         };
-        self.resume_in_flight.set(true);
-        let in_flight = Rc::clone(&self.resume_in_flight);
+        self.auto_resume_in_flight.set(true);
+        let in_flight = Rc::clone(&self.auto_resume_in_flight);
+        let desired_paused = Rc::clone(&self.desired_paused);
+        let context = self.context.clone();
         spawn_local(async move {
             let _ = JsFuture::from(promise).await;
             in_flight.set(false);
+            reconcile_context_state(&context, &desired_paused);
         });
     }
 
-    /// Suspends the `AudioContext` when running or resuming.
-    pub(crate) fn suspend(&self) {
-        if self.context.state() == AudioContextState::Closed || self.suspend_in_flight.get() {
+    /// Unconditionally invokes `AudioContext::resume()` synchronously when the
+    /// context is not closed, preserving transient browser user activation even
+    /// if an earlier pre-gesture `resume()` promise is still pending.
+    pub(crate) fn resume_now(&self) {
+        self.desired_paused.set(false);
+        if self.context.state() == AudioContextState::Closed {
             return;
         }
-        if self.context.state() != AudioContextState::Running && !self.resume_in_flight.get() {
+        let Ok(promise) = self.context.resume() else {
+            return;
+        };
+        let desired_paused = Rc::clone(&self.desired_paused);
+        let context = self.context.clone();
+        spawn_local(async move {
+            let _ = JsFuture::from(promise).await;
+            reconcile_context_state(&context, &desired_paused);
+        });
+    }
+
+    /// Suspends the `AudioContext` and reconciles if rapid pause/resume toggles
+    /// overlap while promises are settling.
+    pub(crate) fn suspend(&self) {
+        self.desired_paused.set(true);
+        if self.context.state() == AudioContextState::Closed {
             return;
         }
         let Ok(promise) = self.context.suspend() else {
             return;
         };
-        self.suspend_in_flight.set(true);
-        let in_flight = Rc::clone(&self.suspend_in_flight);
+        let desired_paused = Rc::clone(&self.desired_paused);
+        let context = self.context.clone();
         spawn_local(async move {
             let _ = JsFuture::from(promise).await;
-            in_flight.set(false);
+            reconcile_context_state(&context, &desired_paused);
         });
     }
 
@@ -260,6 +270,26 @@ impl Drop for WebAudioBackend {
                 let _ = JsFuture::from(promise).await;
             });
         }
+    }
+}
+
+fn reconcile_context_state(context: &AudioContext, desired_paused: &Cell<bool>) {
+    match (desired_paused.get(), context.state()) {
+        (true, AudioContextState::Running) => {
+            if let Ok(promise) = context.suspend() {
+                spawn_local(async move {
+                    let _ = JsFuture::from(promise).await;
+                });
+            }
+        }
+        (false, AudioContextState::Suspended) => {
+            if let Ok(promise) = context.resume() {
+                spawn_local(async move {
+                    let _ = JsFuture::from(promise).await;
+                });
+            }
+        }
+        _ => {}
     }
 }
 
