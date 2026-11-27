@@ -68,12 +68,14 @@ mod tests {
         let mix = spatialize(&listener, Vec3::new(100.0, 50.0, -20.0), 0.0, 0.8);
         assert_close(mix.gain, 0.8, 1e-6);
         assert_close(mix.pan, 0.0, 1e-6);
-        assert_close(mix.left_gain, 0.8 * FRAC_1_SQRT_2, 1e-6);
-        assert_close(mix.right_gain, 0.8 * FRAC_1_SQRT_2, 1e-6);
+        assert_close(mix.left_gain, 0.8, 1e-6);
+        assert_close(mix.right_gain, 0.8, 1e-6);
 
         let neg_range = spatialize(&listener, Vec3::new(-50.0, 0.0, 0.0), -5.0, 0.5);
         assert_close(neg_range.gain, 0.5, 1e-6);
         assert_close(neg_range.pan, 0.0, 1e-6);
+        assert_close(neg_range.left_gain, 0.5, 1e-6);
+        assert_close(neg_range.right_gain, 0.5, 1e-6);
     }
 
     #[test]
@@ -174,6 +176,8 @@ mod tests {
         let mix2 = engine.emitter_mix(2).expect("emitter 2 tracked");
         assert_close(mix2.gain, 0.5, 1e-6);
         assert_close(mix2.pan, 0.0, 1e-6);
+        assert_close(mix2.left_gain, 0.5, 1e-6);
+        assert_close(mix2.right_gain, 0.5, 1e-6);
 
         // Move listener to emitter 1's position and update
         engine.set_listener(Listener3d {

@@ -83,6 +83,8 @@ struct TrackedEmitter {
     mix: SpatialMix,
     #[cfg(all(feature = "playback", not(target_arch = "wasm32")))]
     voice: Option<ActiveVoice>,
+    #[cfg(all(feature = "playback", not(target_arch = "wasm32")))]
+    failed_decode: Option<(String, u64)>,
 }
 
 struct ActiveOneshot {
@@ -218,6 +220,8 @@ impl AudioEngine {
             mix,
             #[cfg(all(feature = "playback", not(target_arch = "wasm32")))]
             voice: None,
+            #[cfg(all(feature = "playback", not(target_arch = "wasm32")))]
+            failed_decode: None,
         });
         entry.state = state;
         entry.mix = mix;
@@ -390,7 +394,15 @@ impl AudioEngine {
             };
 
             if needs_start {
+                if emitter
+                    .failed_decode
+                    .as_ref()
+                    .is_some_and(|(clip, rev)| *clip == emitter.state.clip && *rev == clip_entry.revision)
+                {
+                    return;
+                }
                 if let Ok(decoder) = Decoder::new(Cursor::new(Arc::clone(&clip_entry.bytes))) {
+                    emitter.failed_decode = None;
                     let gains = StereoGains::new(emitter.mix.left_gain, emitter.mix.right_gain);
                     let player = Player::connect_new(sink.mixer());
                     if self.paused {
@@ -413,6 +425,7 @@ impl AudioEngine {
                     });
                 } else {
                     emitter.voice = None;
+                    emitter.failed_decode = Some((emitter.state.clip.clone(), clip_entry.revision));
                 }
             } else if let Some(voice) = &emitter.voice {
                 voice
@@ -452,6 +465,6 @@ fn compute_mix_with(
     }
     match spatial {
         Some((position, range)) => spatialize(listener, position, range, scaled_volume),
-        None => SpatialMix::from_gain_pan(scaled_volume, 0.0),
+        None => SpatialMix::centered(scaled_volume),
     }
 }

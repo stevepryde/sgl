@@ -67,6 +67,25 @@ impl SpatialMix {
         right_gain: 0.0,
     };
 
+    /// Unity per-channel centered mix for non-positional 2D audio (`left == right == gain`).
+    #[must_use]
+    pub fn centered(gain: f32) -> Self {
+        let gain = if gain.is_finite() {
+            gain.max(0.0)
+        } else {
+            0.0
+        };
+        if gain == 0.0 {
+            return Self::SILENT;
+        }
+        Self {
+            gain,
+            pan: 0.0,
+            left_gain: gain,
+            right_gain: gain,
+        }
+    }
+
     /// Computes a constant-power stereo mix from linear `gain` and `pan` (`-1..=1`).
     ///
     /// Maps `theta = (pan + 1.0) * FRAC_PI_4`, yielding
@@ -126,7 +145,7 @@ pub fn spatialize(
         return SpatialMix::SILENT;
     }
     if !range.is_finite() || range <= 0.0 {
-        return SpatialMix::from_gain_pan(volume, 0.0);
+        return SpatialMix::centered(volume);
     }
 
     let to_source = source_position - listener.position;
