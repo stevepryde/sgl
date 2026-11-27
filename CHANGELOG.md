@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+## 0.12.1 — 2026-11-27
+
+No game code, data or settings need to change.
+
 - `sgl-3d` adds `spring_bones` ([guide](crates/sgl-3d/README.md#spring-bones)): `SpringBones::new(&rig, &[Chain], &[Sheet], &[Collider])` and `step(&rig, &mut pose, world, force, dt)` swing chains of rig nodes (hair, tails, loose clothing) in a sampled pose around sphere and capsule colliders, at a fixed 1/60 s, with `Sheet { chains, closed }` tying side-by-side chains into a cape or skirt; `reset()` restarts them at rest. No game-code changes are needed.
 
 ## 0.12.0 — 2026-11-26

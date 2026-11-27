@@ -29,8 +29,8 @@ Use only the crates your game needs, all at the same version:
 
 ```toml
 [dependencies]
-sgl-core = "0.12.0"
-sgl-2d = "0.12.0"
+sgl-core = "0.12.1"
+sgl-2d = "0.12.1"
 ```
 
 When changing SGL alongside a game, use a sibling checkout:
@@ -162,11 +162,11 @@ the game's `Cargo.lock`:
 
 ```toml
 [dependencies]
-sgl-core = "0.12.0"
-sgl-2d = "0.12.0"
+sgl-core = "0.12.1"
+sgl-2d = "0.12.1"
 ```
 
-SGL follows semver as Cargo applies it. During `0.x`, `"0.12.0"` accepts later
+SGL follows semver as Cargo applies it. During `0.x`, `"0.12.1"` accepts later
 `0.12.x` releases but never `0.13`. A patch release adds or fixes without
 requiring a change to game code, data or settings; a release that does
 require one advances the minor version. `Cargo.lock` keeps the resolved graph
